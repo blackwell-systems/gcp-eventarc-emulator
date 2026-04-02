@@ -1,1 +1,3 @@
-server
+gcp-eventarc-emulator
+*.test
+.env
