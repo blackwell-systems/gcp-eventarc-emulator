@@ -1,0 +1,415 @@
+# GCP Eventarc Emulator
+
+[![Blackwell Systems](https://raw.githubusercontent.com/blackwell-systems/blackwell-docs-theme/main/badge-trademark.svg)](https://github.com/blackwell-systems)
+[![Go Reference](https://pkg.go.dev/badge/github.com/blackwell-systems/gcp-eventarc-emulator.svg)](https://pkg.go.dev/github.com/blackwell-systems/gcp-eventarc-emulator)
+[![Go Version](https://img.shields.io/badge/go-1.24+-blue.svg)](https://go.dev/)
+[![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
+
+> **Full Eventarc emulator** — Create triggers, publish CloudEvents, and route them to HTTP destinations locally. No GCP credentials required.
+
+A production-grade Eventarc implementation with optional **pre-flight IAM enforcement**. Implements all 40 Eventarc v1 RPCs + the Publishing v1 service, CloudEvent routing with CEL condition evaluation, and HTTP delivery in binary content mode.
+
+**Triple protocol support**: Native gRPC + REST/HTTP (via grpc-gateway) + CloudEvents binary mode delivery.
+
+## Quick Start
+
+**Prerequisites:** Go 1.24+
+
+```bash
+go install github.com/blackwell-systems/gcp-eventarc-emulator/cmd/server-dual@latest
+server-dual
+```
+
+gRPC on `:9085`, REST on `:8085`.
+
+**Verify it works:**
+```bash
+# Create a trigger
+curl -X POST "http://localhost:8085/v1/projects/my-project/locations/us-central1/triggers?triggerId=my-trigger" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "eventFilters": [
+      {"attribute": "type", "value": "google.cloud.pubsub.topic.v1.messagePublished"}
+    ],
+    "destination": {
+      "httpEndpoint": {"uri": "http://localhost:3000/webhook"}
+    }
+  }'
+
+# List triggers
+curl "http://localhost:8085/v1/projects/my-project/locations/us-central1/triggers"
+
+# List providers
+curl "http://localhost:8085/v1/projects/my-project/locations/us-central1/providers"
+```
+
+---
+
+## How It Works
+
+```
+                   ┌─────────────────────────────┐
+                   │     GCP SDK / gRPC Client    │
+                   └──────────────┬──────────────┘
+                                  │
+              ┌───────────────────┼───────────────────┐
+              │                   │                    │
+   ┌──────────▼──────────┐  ┌────▼─────┐  ┌──────────▼──────────┐
+   │  Eventarc Service   │  │   LRO    │  │  Publisher Service  │
+   │  (40 RPCs: CRUD     │  │  Store   │  │  (PublishEvents,    │
+   │   for 8 resources)  │  │          │  │   PublishChannel-   │
+   │                     │  │          │  │   ConnectionEvents) │
+   └──────────┬──────────┘  └──────────┘  └──────────┬──────────┘
+              │                                       │
+              │              ┌───────────┐            │
+              │              │   Router  │◄───────────┘
+              │              │ (match by │
+              │              │  filters  │
+              │              │  + CEL)   │
+              │              └─────┬─────┘
+              │                    │
+              │           ┌────────▼────────┐
+              │           │   Dispatcher    │
+              │           │  (HTTP POST,    │
+              │           │   binary mode,  │
+              │           │   ce-* headers) │
+              │           └────────┬────────┘
+              │                    │
+              │           ┌────────▼────────┐
+              │           │  HTTP Endpoint  │
+              │           │  (your service) │
+              └───────────┘  └───────────────┘
+```
+
+1. **Configure** — Create triggers with event filters and HTTP destinations via the Eventarc gRPC/REST API
+2. **Publish** — Send CloudEvents via the Publisher gRPC service
+3. **Route** — The router matches events against trigger filters and optional CEL conditions
+4. **Deliver** — The dispatcher HTTP POSTs to destinations using CloudEvents binary content mode (`ce-*` headers)
+
+---
+
+## Supported Operations
+
+### Triggers (5 RPCs)
+- `CreateTrigger` / `GetTrigger` / `UpdateTrigger` / `DeleteTrigger` / `ListTriggers`
+- Event filter matching on CloudEvent attributes (type, source, custom extensions)
+
+### Channels (5 RPCs)
+- `CreateChannel` / `GetChannel` / `UpdateChannel` / `DeleteChannel` / `ListChannels`
+
+### Channel Connections (4 RPCs)
+- `CreateChannelConnection` / `GetChannelConnection` / `DeleteChannelConnection` / `ListChannelConnections`
+
+### Google Channel Config (2 RPCs)
+- `GetGoogleChannelConfig` / `UpdateGoogleChannelConfig`
+- Singleton per project/location (no Create/Delete)
+
+### Message Buses (6 RPCs)
+- `CreateMessageBus` / `GetMessageBus` / `UpdateMessageBus` / `DeleteMessageBus` / `ListMessageBuses` / `ListMessageBusEnrollments`
+
+### Enrollments (5 RPCs)
+- `CreateEnrollment` / `GetEnrollment` / `UpdateEnrollment` / `DeleteEnrollment` / `ListEnrollments`
+
+### Pipelines (5 RPCs)
+- `CreatePipeline` / `GetPipeline` / `UpdatePipeline` / `DeletePipeline` / `ListPipelines`
+
+### Google API Sources (5 RPCs)
+- `CreateGoogleApiSource` / `GetGoogleApiSource` / `UpdateGoogleApiSource` / `DeleteGoogleApiSource` / `ListGoogleApiSources`
+
+### Providers (2 RPCs)
+- `GetProvider` / `ListProviders`
+- Seeded with default GCP providers (pubsub, storage, firestore, etc.)
+
+### Publishing (2 RPCs)
+- `PublishEvents` / `PublishChannelConnectionEvents`
+- Unpacks proto CloudEvent → routes → dispatches to matching trigger destinations
+
+### Long-Running Operations
+- All Create/Update/Delete operations return `google.longrunning.Operation` (resolved immediately)
+- Full `OperationsServer`: Get, List, Delete, Cancel, Wait
+
+**Total: 40 Eventarc RPCs + 2 Publisher RPCs + 5 Operations RPCs = 47 RPCs**
+
+---
+
+## Server Variants
+
+> **Not sure which to pick?** Use `server-dual`. It does everything the others do.
+
+| Variant | Protocols | Best For |
+|---------|-----------|----------|
+| `server-dual` | gRPC + REST | Most users — works with SDKs and curl |
+| `server` | gRPC only | Go/Python/Java SDK users who want minimal overhead |
+| `server-rest` | REST/HTTP only | Shell scripts, curl, non-Go languages without gRPC |
+
+### Install
+
+```bash
+# gRPC only
+go install github.com/blackwell-systems/gcp-eventarc-emulator/cmd/server@latest
+
+# REST API only
+go install github.com/blackwell-systems/gcp-eventarc-emulator/cmd/server-rest@latest
+
+# Both protocols (recommended)
+go install github.com/blackwell-systems/gcp-eventarc-emulator/cmd/server-dual@latest
+```
+
+### Run Server
+
+**gRPC server:**
+```bash
+server --port 9085
+```
+
+**REST server:**
+```bash
+server-rest
+# gRPC (internal) on :9086, HTTP on :8085
+```
+
+**Dual protocol server:**
+```bash
+server-dual
+# gRPC on :9085, HTTP on :8085
+```
+
+---
+
+## Use with GCP SDKs
+
+Point your existing GCP SDK code at the emulator. No code changes needed beyond the connection setup.
+
+**Go:**
+```go
+import (
+    eventarc "cloud.google.com/go/eventarc/apiv1"
+    "google.golang.org/api/option"
+    "google.golang.org/grpc"
+    "google.golang.org/grpc/credentials/insecure"
+)
+
+conn, _ := grpc.NewClient("localhost:9085",
+    grpc.WithTransportCredentials(insecure.NewCredentials()),
+)
+client, _ := eventarc.NewClient(ctx, option.WithGRPCConn(conn))
+defer client.Close()
+
+// Use client normally — API is identical to real GCP
+```
+
+**Python:**
+```python
+from google.cloud import eventarc_v1
+import grpc
+
+channel = grpc.insecure_channel("localhost:9085")
+client = eventarc_v1.EventarcClient(
+    transport=eventarc_v1.transports.EventarcGrpcTransport(channel=channel)
+)
+```
+
+## Use with REST API
+
+```bash
+# Create a trigger that routes Pub/Sub events to your local service
+curl -X POST "http://localhost:8085/v1/projects/test/locations/us-central1/triggers?triggerId=pubsub-trigger" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "eventFilters": [
+      {"attribute": "type", "value": "google.cloud.pubsub.topic.v1.messagePublished"}
+    ],
+    "destination": {
+      "httpEndpoint": {"uri": "http://localhost:3000/events"}
+    }
+  }'
+
+# Create a channel
+curl -X POST "http://localhost:8085/v1/projects/test/locations/us-central1/channels?channelId=my-channel" \
+  -H "Content-Type: application/json" \
+  -d '{}'
+
+# List all triggers
+curl "http://localhost:8085/v1/projects/test/locations/us-central1/triggers"
+```
+
+---
+
+## Event Routing & Delivery
+
+### How Events Are Matched
+
+When a CloudEvent is published via the Publisher service:
+
+1. **Attribute filters** — Each trigger's `eventFilters` are matched against the event's `type`, `source`, and extension attributes (exact match, all must pass)
+2. **CEL conditions** — If the trigger has a `condition` field, it's evaluated as a [CEL expression](https://github.com/google/cel-spec) against the event attributes
+3. **Delivery** — Matching triggers' destinations receive the event via HTTP POST
+
+### Binary Content Mode
+
+Events are delivered using **CloudEvents binary content mode** (matching real GCP Eventarc behavior):
+
+```
+POST /webhook HTTP/1.1
+Content-Type: application/json
+Ce-Specversion: 1.0
+Ce-Type: google.cloud.pubsub.topic.v1.messagePublished
+Ce-Source: //pubsub.googleapis.com/projects/my-project/topics/my-topic
+Ce-Id: abc-123
+Ce-Subject: my-subject
+
+{"subscription":"...","message":{"data":"base64..."}}
+```
+
+Event attributes go in `Ce-*` HTTP headers; the payload goes in the body. This matches how real Eventarc delivers to Cloud Run and HTTP endpoints.
+
+### Authorization Token for Cloud Run
+
+Set the `EVENTARC_EMULATOR_TOKEN` environment variable to include an `Authorization: Bearer` header on all dispatched requests:
+
+```bash
+EVENTARC_EMULATOR_TOKEN=my-test-token server-dual
+```
+
+If unset, no authorization header is added (fine for local HTTP test servers).
+
+---
+
+## Usage Modes
+
+**Standalone** — Run independently for Eventarc-only testing:
+```bash
+server-dual
+```
+
+**With IAM Enforcement** — Run with IAM checks:
+```bash
+IAM_MODE=strict IAM_EMULATOR_HOST=localhost:8080 server-dual
+# Now requires valid permissions for all operations
+```
+
+**Orchestrated Ecosystem** — Use with [GCP IAM Control Plane](https://github.com/blackwell-systems/gcp-iam-control-plane):
+```bash
+gcp-emulator start
+# Eventarc + Secret Manager + KMS + IAM emulator
+# Single policy file, unified authorization
+```
+
+---
+
+## IAM Integration
+
+Optional permission checks using the [GCP IAM Emulator](https://github.com/blackwell-systems/gcp-iam-emulator).
+
+### IAM Permissions
+
+| Operation | Permission |
+|-----------|-----------|
+| CreateTrigger | `eventarc.triggers.create` |
+| GetTrigger | `eventarc.triggers.get` |
+| UpdateTrigger | `eventarc.triggers.update` |
+| DeleteTrigger | `eventarc.triggers.delete` |
+| ListTriggers | `eventarc.triggers.list` |
+| CreateChannel | `eventarc.channels.create` |
+| GetChannel | `eventarc.channels.get` |
+| UpdateChannel | `eventarc.channels.update` |
+| DeleteChannel | `eventarc.channels.delete` |
+| ListChannels | `eventarc.channels.list` |
+| GetProvider | `eventarc.providers.get` |
+| ListProviders | `eventarc.providers.list` |
+| *...and 24 more* | *All 36 operations have IAM mappings* |
+
+### Enforcement Modes
+
+| Scenario | `off` | `permissive` | `strict` |
+|----------|-------|--------------|----------|
+| No IAM emulator | Allow | Allow | Deny |
+| IAM unavailable | Allow | Allow | Deny |
+| No principal | Allow | Deny | Deny |
+| Permission denied | Allow | Deny | Deny |
+
+---
+
+## Configuration
+
+### Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `EVENTARC_EMULATOR_HOST` | `localhost:9085` | gRPC host:port |
+| `EVENTARC_HTTP_PORT` | `8085` | HTTP/REST port (server-rest, server-dual) |
+| `EVENTARC_EMULATOR_TOKEN` | *(unset)* | Bearer token for dispatched HTTP requests |
+| `GCP_MOCK_LOG_LEVEL` | `info` | Log level: debug, info, warn, error |
+| `IAM_MODE` | `off` | IAM enforcement: off, permissive, strict |
+| `IAM_EMULATOR_HOST` | `localhost:8080` | IAM emulator address |
+
+---
+
+## REST Gateway
+
+The REST API is powered by [grpc-gateway v2](https://github.com/grpc-ecosystem/grpc-gateway), which transcodes HTTP/JSON requests to gRPC using the official Eventarc proto HTTP annotations. This means:
+
+- REST paths match the real GCP Eventarc REST API exactly
+- Request/response JSON matches GCP's format
+- Both the Eventarc service and Publisher service are exposed
+
+---
+
+## Testing
+
+```bash
+# Run all tests
+go test ./...
+
+# With race detector
+go test -race ./...
+
+# Integration tests only
+go test -v -run TestIntegration ./...
+```
+
+## Differences from Real GCP
+
+**Intentional simplifications:**
+- Optional IAM enforcement (off by default)
+- In-memory storage (no persistence across restarts)
+- LROs resolve immediately (no async processing)
+- No encryption at rest
+- No regional constraints or replication
+- Provider list is static (seeded at startup)
+
+**Perfect for:**
+- Local development and testing
+- CI/CD pipelines
+- Integration testing with CloudEvents
+- Prototyping Eventarc workflows offline
+
+**Not for:**
+- Production use
+- Performance benchmarking
+
+---
+
+## Disclaimer
+
+This project is not affiliated with, endorsed by, or sponsored by Google LLC or Google Cloud Platform. "Google Cloud", "Eventarc", and related trademarks are property of Google LLC. This is an independent open-source implementation for testing and development purposes.
+
+## Maintained By
+
+Maintained by **Dayna Blackwell** — founder of Blackwell Systems, building reference infrastructure for cloud-native development.
+
+[GitHub](https://github.com/blackwell-systems) · [LinkedIn](https://linkedin.com/in/dayna-blackwell) · [Blog](https://blog.blackwell-systems.com)
+
+## Related Projects
+
+- [**GCP IAM Control Plane**](https://github.com/blackwell-systems/gcp-iam-control-plane) — CLI to orchestrate the Local IAM Control Plane
+- [GCP Secret Manager Emulator](https://github.com/blackwell-systems/gcp-secret-manager-emulator) — IAM-enforced Secret Manager emulator
+- [GCP KMS Emulator](https://github.com/blackwell-systems/gcp-kms-emulator) — IAM-enforced KMS emulator
+- [GCP IAM Emulator](https://github.com/blackwell-systems/gcp-iam-emulator) — Policy engine for IAM enforcement
+- [gcp-emulator-auth](https://github.com/blackwell-systems/gcp-emulator-auth) — Enforcement proxy library
+
+---
+
+## License
+
+Apache License 2.0 — See [LICENSE](LICENSE) for details.

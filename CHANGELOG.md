@@ -1,0 +1,33 @@
+# Changelog
+
+All notable changes to this project will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [0.1.0] - 2026-04-02
+
+### Added
+
+- **Eventarc gRPC service** — All 40 RPCs across 8 resource types:
+  - Trigger CRUD (5 RPCs)
+  - Channel CRUD (5 RPCs)
+  - ChannelConnection CRUD (4 RPCs)
+  - GoogleChannelConfig Get/Update (2 RPCs)
+  - MessageBus CRUD + ListEnrollments (6 RPCs)
+  - Enrollment CRUD (5 RPCs)
+  - Pipeline CRUD (5 RPCs)
+  - GoogleApiSource CRUD (5 RPCs)
+  - Provider Get/List (2 RPCs) with seeded default GCP providers
+- **Publisher gRPC service** — `PublishEvents` and `PublishChannelConnectionEvents` RPCs; unpacks proto CloudEvent to SDK event, routes, and dispatches
+- **Long-running operations** — All mutating operations return `google.longrunning.Operation` (resolved immediately); full `OperationsServer` (Get, List, Delete, Cancel, Wait)
+- **CloudEvent routing** — Attribute filter matching on trigger `matchingCriteria` (type, source, custom extensions); CEL condition evaluation via `cel-go` for advanced filtering
+- **HTTP delivery** — Binary content mode (`ce-*` headers, raw data body) matching real GCP Eventarc behavior
+- **Authorization token** — `EVENTARC_EMULATOR_TOKEN` env var adds `Authorization: Bearer` header to dispatched requests (for Cloud Run targets)
+- **REST gateway** — grpc-gateway v2 transcoding for both Eventarc and Publisher services; REST paths match the real GCP API
+- **Three server variants** — `cmd/server` (gRPC only), `cmd/server-rest` (REST only), `cmd/server-dual` (gRPC + REST)
+- **IAM integration** — Optional pre-flight authorization via [gcp-emulator-auth](https://github.com/blackwell-systems/gcp-emulator-auth) with 36 permission mappings; off/permissive/strict modes
+- **In-memory storage** — Thread-safe with `sync.RWMutex`, `proto.Clone` for safe copies, integer-offset pagination, sorted list results
+- **Integration tests** — End-to-end tests covering Trigger CRUD, Provider queries, and error cases via bufconn
+
+[0.1.0]: https://github.com/blackwell-systems/gcp-eventarc-emulator/releases/tag/v0.1.0
