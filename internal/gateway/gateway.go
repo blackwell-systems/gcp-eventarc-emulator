@@ -11,15 +11,15 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
-	eventarcv1 "github.com/blackwell-systems/gcp-eventarc-emulator/internal/gen/google/cloud/eventarc/v1"
 	publishingv1 "github.com/blackwell-systems/gcp-eventarc-emulator/internal/gen/google/cloud/eventarc/publishing/v1"
+	eventarcv1 "github.com/blackwell-systems/gcp-eventarc-emulator/internal/gen/google/cloud/eventarc/v1"
 )
 
 // Gateway transcodes HTTP/JSON requests to gRPC via grpc-gateway.
 type Gateway struct {
-	mux      *runtime.ServeMux
-	httpSrv  *http.Server
-	conn     *grpc.ClientConn
+	mux     *runtime.ServeMux
+	httpSrv *http.Server
+	conn    *grpc.ClientConn
 }
 
 // New creates a Gateway that proxies REST requests to the gRPC server at grpcAddr.

@@ -13,8 +13,8 @@ import (
 	"testing"
 
 	eventarcpb "cloud.google.com/go/eventarc/apiv1/eventarcpb"
-	longrunningpb "cloud.google.com/go/longrunning/autogen/longrunningpb"
 	publishingpb "cloud.google.com/go/eventarc/publishing/apiv1/publishingpb"
+	longrunningpb "cloud.google.com/go/longrunning/autogen/longrunningpb"
 	"github.com/blackwell-systems/gcp-eventarc-emulator/internal/dispatcher"
 	"github.com/blackwell-systems/gcp-eventarc-emulator/internal/publisher"
 	"github.com/blackwell-systems/gcp-eventarc-emulator/internal/router"
@@ -650,11 +650,11 @@ func TestIntegration_PublishEvents_EndToEnd(t *testing.T) {
 
 	// Build a CloudEvent proto to publish.
 	ceProto := &publishingpb.CloudEvent{
-		Id:                fmt.Sprintf("test-id-%d", 1),
-		Source:            "//test.source/projects/test-project",
-		SpecVersion:       "1.0",
-		Type:              "test.event.v1",
-		Data:              &publishingpb.CloudEvent_TextData{TextData: `{"key":"value"}`},
+		Id:          fmt.Sprintf("test-id-%d", 1),
+		Source:      "//test.source/projects/test-project",
+		SpecVersion: "1.0",
+		Type:        "test.event.v1",
+		Data:        &publishingpb.CloudEvent_TextData{TextData: `{"key":"value"}`},
 	}
 	ceAny, err := anypb.New(ceProto)
 	if err != nil {

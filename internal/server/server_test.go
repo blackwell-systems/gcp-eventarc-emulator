@@ -551,9 +551,9 @@ func TestCreateGoogleApiSource_Success(t *testing.T) {
 
 	parent := "projects/my-project/locations/us-central1"
 	op, err := srv.CreateGoogleApiSource(ctx, &eventarcpb.CreateGoogleApiSourceRequest{
-		Parent:             parent,
-		GoogleApiSourceId:  "my-source",
-		GoogleApiSource:    &eventarcpb.GoogleApiSource{},
+		Parent:            parent,
+		GoogleApiSourceId: "my-source",
+		GoogleApiSource:   &eventarcpb.GoogleApiSource{},
 	})
 	if err != nil {
 		t.Fatalf("CreateGoogleApiSource: %v", err)

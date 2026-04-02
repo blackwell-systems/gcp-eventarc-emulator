@@ -2,8 +2,8 @@ package server
 
 import (
 	eventarcpb "cloud.google.com/go/eventarc/apiv1/eventarcpb"
-	longrunningpb "cloud.google.com/go/longrunning/autogen/longrunningpb"
 	publishingpb "cloud.google.com/go/eventarc/publishing/apiv1/publishingpb"
+	longrunningpb "cloud.google.com/go/longrunning/autogen/longrunningpb"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/reflection"
 )
