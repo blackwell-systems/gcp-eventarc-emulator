@@ -70,6 +70,10 @@ file_ownership:
       agent: A
       wave: 1
       action: modify
+    - file: internal/router/router_test.go
+      agent: A
+      wave: 1
+      action: modify
     - file: internal/server/storage_channel.go
       agent: B
       wave: 1
