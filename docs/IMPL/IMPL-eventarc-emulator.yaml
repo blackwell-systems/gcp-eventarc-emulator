@@ -579,6 +579,7 @@ waves:
           files:
             - internal/lro/store.go
             - internal/lro/store_test.go
+      base_commit: da809cbfd9a37b75d0968480da698d045d050cb9
     - number: 2
       agents:
         - id: A
@@ -1338,6 +1339,69 @@ quality_gates:
         - type: test
           command: go test ./...
           required: true
+completion_reports:
+    A:
+        status: complete
+        branch: saw/eventarc-emulator/wave1-agent-A
+        commit: 54cee54
+        files_changed:
+            - go.mod
+            - go.sum
+            - cmd/server/main.go
+            - Makefile
+            - .gitignore
+            - internal/server/stub.go
+        files_created:
+            - go.sum
+            - Makefile
+            - internal/server/stub.go
+        verification: PASS
+        notes: 'All quality gates pass (build, vet, test). go.mod uses longrunning v0.8.0 (go mod tidy bumped from v0.6.0). Created internal/server/stub.go as minimal compile stub to satisfy pre-commit gate; Wave 2 Agent B owns this package and must replace stub.go with full implementation. cmd/server/main.go wires NewServer() manually; Wave 3 Agent C updates to use server.NewGRPCServer(srv, pub). Out-of-scope dep: internal/server full implementation (Wave 2 Agent B).'
+    B:
+        status: complete
+        branch: saw/eventarc-emulator/wave1-agent-B
+        commit: 9bf6470
+        files_changed:
+            - .gitignore
+            - go.mod
+            - go.sum
+            - internal/server/storage.go
+            - internal/server/storage_test.go
+        files_created:
+            - internal/server/storage.go
+            - internal/server/storage_test.go
+            - go.sum
+        tests_added:
+            - TestStorageCreateTrigger_Success
+            - TestStorageCreateTrigger_AlreadyExists
+            - TestStorageGetTrigger_NotFound
+            - TestStorageDeleteTrigger_NotFound
+            - TestStorageListTriggers_Pagination
+            - TestStorageListProviders_ReturnsDefaults
+        verification: PASS
+        notes: 'Storage implementation complete. All 6 tests pass. Fixed .gitignore: bare ''server'' entry was blocking internal/server/ from being tracked; updated to scope ignores to binary output paths only. Used proto.Clone for safe proto copies (avoids copying sync.Mutex in protoimpl.MessageState). Provider seeding uses synthetic projects/-/locations/-/providers/{id} keys rewritten to caller''s parent at query time.'
+    C:
+        status: complete
+        branch: saw/eventarc-emulator/wave1-agent-C
+        commit: a04eb9d
+        files_changed:
+            - internal/lro/store.go
+            - internal/lro/store_test.go
+            - go.mod
+            - go.sum
+        files_created:
+            - internal/lro/store.go
+            - internal/lro/store_test.go
+        tests_added:
+            - TestCreateDone_ReturnsImmediatelyDone
+            - TestCreateDone_ResponseUnpackable
+            - TestGetOperation_NotFound
+            - TestDeleteOperation_NotFound
+            - TestCancelOperation_NoOp
+            - TestWaitOperation_ReturnsImmediately
+            - TestListOperations_FiltersByPrefix
+        verification: PASS
+        notes: LRO store complete. All 7 tests passing. Import path confirmed as cloud.google.com/go/longrunning/autogen/longrunningpb (v0.8.0). Store implements longrunningpb.OperationsServer; downstream wiring via longrunningpb.RegisterOperationsServer(grpcServer, lroStore) is Wave 2 Agent B scope.
 pre_mortem:
     overall_risk: medium
     rows:

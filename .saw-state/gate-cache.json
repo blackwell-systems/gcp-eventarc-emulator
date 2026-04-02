@@ -1,5 +1,17 @@
 {
   "entries": {
+    "2be977c10161aa1458338a846cca7353": {
+      "test": {
+        "gate_type": "test",
+        "command": "go test ./...",
+        "passed": true,
+        "exit_code": 0,
+        "stdout": "?   \tgithub.com/blackwell-systems/gcp-eventarc-emulator/cmd/server\t[no test files]\n",
+        "stderr": "",
+        "from_cache": true,
+        "cached_at": "2026-04-01T22:04:19.379134-07:00"
+      }
+    },
     "35c55951a74925caec1de8855202399e": {
       "build": {
         "gate_type": "build",
@@ -10,6 +22,18 @@
         "stderr": "pattern ./...: directory prefix . does not contain main module or its selected dependencies\n",
         "from_cache": true,
         "cached_at": "2026-04-01T22:03:16.775163-07:00"
+      }
+    },
+    "3ba451d4662f8538b00cd4674040f3ba": {
+      "lint": {
+        "gate_type": "lint",
+        "command": "go vet ./...",
+        "passed": true,
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": "",
+        "from_cache": true,
+        "cached_at": "2026-04-01T22:04:19.144693-07:00"
       }
     },
     "9708b5bb6b2fc029d913892ddc7ca9f2": {
@@ -34,6 +58,18 @@
         "stderr": "pattern ./...: directory prefix . does not contain main module or its selected dependencies\n",
         "from_cache": true,
         "cached_at": "2026-04-01T22:03:16.896615-07:00"
+      }
+    },
+    "e8544c39fd474f7fb8f075f93e33345b": {
+      "build": {
+        "gate_type": "build",
+        "command": "go build ./...",
+        "passed": true,
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": "",
+        "from_cache": true,
+        "cached_at": "2026-04-01T22:04:18.930239-07:00"
       }
     }
   }
