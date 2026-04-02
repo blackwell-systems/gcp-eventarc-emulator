@@ -84,6 +84,18 @@
         "cached_at": "2026-04-01T22:04:19.144693-07:00"
       }
     },
+    "614d52c56866bf9884e83ec2a9550c8b": {
+      "build": {
+        "gate_type": "build",
+        "command": "go build ./...",
+        "passed": true,
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": "",
+        "from_cache": true,
+        "cached_at": "2026-04-02T00:05:34.601537-07:00"
+      }
+    },
     "61b3147cbbb4a35634e99a644588b143": {
       "lint": {
         "gate_type": "lint",
@@ -120,6 +132,18 @@
         "cached_at": "2026-04-01T22:03:17.006964-07:00"
       }
     },
+    "9fdda4b9ce4fd07f2e0f6f7b244ec1a6": {
+      "lint": {
+        "gate_type": "lint",
+        "command": "go vet ./...",
+        "passed": true,
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": "",
+        "from_cache": true,
+        "cached_at": "2026-04-02T00:05:35.279569-07:00"
+      }
+    },
     "b3a8a7988e76374423d0bde264843675": {
       "test": {
         "gate_type": "test",
@@ -154,6 +178,18 @@
         "stderr": "",
         "from_cache": true,
         "cached_at": "2026-04-02T00:00:10.517627-07:00"
+      }
+    },
+    "de0d029601c25ffec2db482147565729": {
+      "test": {
+        "gate_type": "test",
+        "command": "go test ./...",
+        "passed": true,
+        "exit_code": 0,
+        "stdout": "?   \tgithub.com/blackwell-systems/gcp-eventarc-emulator/cmd/server\t[no test files]\nok  \tgithub.com/blackwell-systems/gcp-eventarc-emulator/internal/authz\t(cached)\nok  \tgithub.com/blackwell-systems/gcp-eventarc-emulator/internal/lro\t(cached)\nok  \tgithub.com/blackwell-systems/gcp-eventarc-emulator/internal/server\t(cached)\n",
+        "stderr": "",
+        "from_cache": true,
+        "cached_at": "2026-04-02T00:05:35.858735-07:00"
       }
     },
     "e078b573c568f5b9c030e3e8862c4ad6": {
