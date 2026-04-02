@@ -24,6 +24,18 @@
         "cached_at": "2026-04-02T00:00:09.766012-07:00"
       }
     },
+    "1a0c60fb0cedff99a8463c05069e0652": {
+      "lint": {
+        "gate_type": "lint",
+        "command": "go vet ./...",
+        "passed": true,
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": "",
+        "from_cache": true,
+        "cached_at": "2026-04-02T00:06:21.079583-07:00"
+      }
+    },
     "1d7ec5009086662638f47421bde8ed80": {
       "test": {
         "gate_type": "test",
@@ -34,6 +46,18 @@
         "stderr": "",
         "from_cache": true,
         "cached_at": "2026-04-02T00:05:23.624252-07:00"
+      }
+    },
+    "275b9c782b926eaea353be11ff07cbe2": {
+      "test": {
+        "gate_type": "test",
+        "command": "go test ./...",
+        "passed": true,
+        "exit_code": 0,
+        "stdout": "?   \tgithub.com/blackwell-systems/gcp-eventarc-emulator/cmd/server\t[no test files]\nok  \tgithub.com/blackwell-systems/gcp-eventarc-emulator/internal/authz\t(cached)\nok  \tgithub.com/blackwell-systems/gcp-eventarc-emulator/internal/lro\t(cached)\nok  \tgithub.com/blackwell-systems/gcp-eventarc-emulator/internal/server\t(cached)\n",
+        "stderr": "",
+        "from_cache": true,
+        "cached_at": "2026-04-02T00:06:21.453004-07:00"
       }
     },
     "2936ae3360730215ada1ec30cd74fd1c": {
@@ -214,6 +238,18 @@
         "stderr": "",
         "from_cache": true,
         "cached_at": "2026-04-01T22:04:18.930239-07:00"
+      }
+    },
+    "ee4c5a3f0b1f7e75d3e1d4e6dfe15943": {
+      "build": {
+        "gate_type": "build",
+        "command": "go build ./...",
+        "passed": true,
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": "",
+        "from_cache": true,
+        "cached_at": "2026-04-02T00:06:20.697596-07:00"
       }
     }
   }
