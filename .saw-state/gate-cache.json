@@ -1,5 +1,29 @@
 {
   "entries": {
+    "1399baeec58d688087608ec5e707137d": {
+      "build": {
+        "gate_type": "build",
+        "command": "go build ./...",
+        "passed": true,
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": "",
+        "from_cache": true,
+        "cached_at": "2026-04-01T23:52:32.006967-07:00"
+      }
+    },
+    "2936ae3360730215ada1ec30cd74fd1c": {
+      "lint": {
+        "gate_type": "lint",
+        "command": "go vet ./...",
+        "passed": true,
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": "",
+        "from_cache": true,
+        "cached_at": "2026-04-01T23:52:32.414563-07:00"
+      }
+    },
     "2be977c10161aa1458338a846cca7353": {
       "test": {
         "gate_type": "test",
@@ -46,6 +70,18 @@
         "stderr": "# ./...\npattern ./...: directory prefix . does not contain main module or its selected dependencies\n",
         "from_cache": true,
         "cached_at": "2026-04-01T22:03:17.006964-07:00"
+      }
+    },
+    "b3a8a7988e76374423d0bde264843675": {
+      "test": {
+        "gate_type": "test",
+        "command": "go test ./...",
+        "passed": true,
+        "exit_code": 0,
+        "stdout": "?   \tgithub.com/blackwell-systems/gcp-eventarc-emulator/cmd/server\t[no test files]\nok  \tgithub.com/blackwell-systems/gcp-eventarc-emulator/internal/lro\t(cached)\nok  \tgithub.com/blackwell-systems/gcp-eventarc-emulator/internal/server\t(cached)\n",
+        "stderr": "",
+        "from_cache": true,
+        "cached_at": "2026-04-01T23:52:32.880791-07:00"
       }
     },
     "e078b573c568f5b9c030e3e8862c4ad6": {
