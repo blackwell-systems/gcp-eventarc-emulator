@@ -1342,17 +1342,14 @@ quality_gates:
 completion_reports:
     A:
         status: complete
-        branch: wave1-agent-A
         commit: 54cee54
         verification: PASS
     B:
         status: complete
-        branch: wave1-agent-B
         commit: 9bf6470
         verification: PASS
     C:
         status: complete
-        branch: wave1-agent-C
         commit: a04eb9d
         verification: PASS
 pre_mortem:
