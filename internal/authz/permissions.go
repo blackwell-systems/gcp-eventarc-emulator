@@ -16,6 +16,45 @@ var permissionMap = map[string]PermissionCheck{
 	"DeleteTrigger": {Permission: "eventarc.triggers.delete"},
 	"GetProvider":   {Permission: "eventarc.providers.get"},
 	"ListProviders": {Permission: "eventarc.providers.list"},
+	// Channel
+	"GetChannel":    {Permission: "eventarc.channels.get"},
+	"ListChannels":  {Permission: "eventarc.channels.list"},
+	"CreateChannel": {Permission: "eventarc.channels.create"},
+	"UpdateChannel": {Permission: "eventarc.channels.update"},
+	"DeleteChannel": {Permission: "eventarc.channels.delete"},
+	// ChannelConnection
+	"GetChannelConnection":    {Permission: "eventarc.channelConnections.get"},
+	"ListChannelConnections":  {Permission: "eventarc.channelConnections.list"},
+	"CreateChannelConnection": {Permission: "eventarc.channelConnections.create"},
+	"DeleteChannelConnection": {Permission: "eventarc.channelConnections.delete"},
+	// GoogleChannelConfig
+	"GetGoogleChannelConfig":    {Permission: "eventarc.googleChannelConfigs.get"},
+	"UpdateGoogleChannelConfig": {Permission: "eventarc.googleChannelConfigs.update"},
+	// MessageBus
+	"GetMessageBus":             {Permission: "eventarc.messageBuses.get"},
+	"ListMessageBuses":          {Permission: "eventarc.messageBuses.list"},
+	"ListMessageBusEnrollments": {Permission: "eventarc.messageBuses.listEnrollments"},
+	"CreateMessageBus":          {Permission: "eventarc.messageBuses.create"},
+	"UpdateMessageBus":          {Permission: "eventarc.messageBuses.update"},
+	"DeleteMessageBus":          {Permission: "eventarc.messageBuses.delete"},
+	// Enrollment
+	"GetEnrollment":    {Permission: "eventarc.enrollments.get"},
+	"ListEnrollments":  {Permission: "eventarc.enrollments.list"},
+	"CreateEnrollment": {Permission: "eventarc.enrollments.create"},
+	"UpdateEnrollment": {Permission: "eventarc.enrollments.update"},
+	"DeleteEnrollment": {Permission: "eventarc.enrollments.delete"},
+	// Pipeline
+	"GetPipeline":    {Permission: "eventarc.pipelines.get"},
+	"ListPipelines":  {Permission: "eventarc.pipelines.list"},
+	"CreatePipeline": {Permission: "eventarc.pipelines.create"},
+	"UpdatePipeline": {Permission: "eventarc.pipelines.update"},
+	"DeletePipeline": {Permission: "eventarc.pipelines.delete"},
+	// GoogleApiSource
+	"GetGoogleApiSource":    {Permission: "eventarc.googleApiSources.get"},
+	"ListGoogleApiSources":  {Permission: "eventarc.googleApiSources.list"},
+	"CreateGoogleApiSource": {Permission: "eventarc.googleApiSources.create"},
+	"UpdateGoogleApiSource": {Permission: "eventarc.googleApiSources.update"},
+	"DeleteGoogleApiSource": {Permission: "eventarc.googleApiSources.delete"},
 }
 
 // GetPermission returns the PermissionCheck for the named operation.
