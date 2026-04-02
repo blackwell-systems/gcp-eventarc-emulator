@@ -8,3 +8,6 @@ cmd/server-dual/server-dual
 gcp-eventarc-emulator
 *.test
 .env
+
+# buf lock file (regenerated on each buf generate)
+buf.lock

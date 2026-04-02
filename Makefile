@@ -1,4 +1,4 @@
-.PHONY: build test lint clean
+.PHONY: build test lint clean proto
 
 build:
 	go build ./...
@@ -11,3 +11,6 @@ lint:
 
 clean:
 	rm -f gcp-eventarc-emulator
+
+proto:
+	buf generate
