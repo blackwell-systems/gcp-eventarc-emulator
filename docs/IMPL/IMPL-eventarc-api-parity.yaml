@@ -1,0 +1,1039 @@
+title: Eventarc API Parity — Binary Content Mode + Missing RPCs
+feature_slug: eventarc-api-parity
+verdict: SUITABLE
+suitability_assessment: |
+    SUITABLE. The work decomposes cleanly into 5 agents across 2 waves with fully
+    disjoint file ownership.
+
+    File decomposition:
+    - Agent A (Wave 1): Binary content mode fix in internal/dispatcher/http.go +
+      test updates in internal/dispatcher/http_test.go. Independent of all other work.
+    - Agent B (Wave 1): Channel + ChannelConnection + GoogleChannelConfig storage
+      methods in internal/server/storage.go (new section appended) +
+      internal/authz/permissions.go (new entries appended) +
+      internal/server/storage_channel_test.go (new test file).
+    - Agent C (Wave 1): MessageBus + Enrollment storage methods in
+      internal/server/storage.go conflicts with Agent B — RESOLVED by splitting
+      into separate new files: internal/server/storage_channel.go (Agent B) and
+      internal/server/storage_messagebus.go (Agent C). Each agent creates a new
+      file in the same package, disjoint ownership enforced.
+    - Agent D (Wave 1): Pipeline + GoogleApiSource storage methods in
+      internal/server/storage_pipeline.go (new file).
+    - Agent E (Wave 2): All new RPC method implementations in
+      internal/server/server.go — depends on Wave 1 storage methods being available.
+
+    I1 self-check: storage.go is a potential conflict point. Resolution: each agent
+    creates a new file in package server (storage_channel.go, storage_messagebus.go,
+    storage_pipeline.go) rather than appending to storage.go. The existing storage.go
+    stays with Agent B only for permissions.go updates; storage.go itself is not
+    touched by any Wave 1 agent. NewStorage() in storage.go must be updated to
+    initialize the new maps — this is assigned to Agent E in Wave 2 (integration
+    wave) since NewStorage() is the single integration point after all storage
+    modules are complete.
+
+    Actually on further review: NewStorage() needs to initialize all new maps.
+    This is a single function in storage.go. To avoid a Wave 2 bottleneck, the
+    best approach is: each Wave 1 storage agent adds a new file with storage
+    methods only (NOT touching NewStorage). A single Wave 2 integration step
+    updates NewStorage() and adds the Server struct field wiring in server.go.
+    This is Agent E's job, giving it clear ownership of storage.go + server.go.
+
+    Pre-implementation status: all 8 scope items are TODO (unimplemented). The
+    UnimplementedEventarcServer returns codes.Unimplemented for all missing RPCs.
+
+    Parallelization value: High.
+    - Build + test cycle: go test ./... takes ~3-5 seconds but agents work on
+      non-trivial code with multiple methods, tests, and edge cases per resource type.
+    - Wave 1: 4 parallel agents (A-D), estimated ~8 min each.
+    - Wave 2: 1 agent (E) sequential, estimated ~12 min.
+    - Total SAW time: ~22 min vs ~50 min sequential.
+
+    Estimated times:
+    - Scout phase: ~15 min (deep codebase + proto analysis)
+    - Agent execution: Wave 1 ~8 min (4 parallel) + Wave 2 ~12 min = ~20 min
+    - Merge & verification: ~5 min
+    Total SAW time: ~40 min
+
+    Sequential baseline: ~50 min
+    Time savings: ~10 min (20% faster). Coordination value high regardless.
+
+    Recommendation: Clear speedup, plus the IMPL doc provides audit trail for
+    systematic API parity coverage.
+test_command: go test ./...
+lint_command: go vet ./...
+file_ownership:
+    - file: internal/dispatcher/http.go
+      agent: A
+      wave: 1
+      action: modify
+    - file: internal/dispatcher/http_test.go
+      agent: A
+      wave: 1
+      action: modify
+    - file: internal/server/storage_channel.go
+      agent: B
+      wave: 1
+      action: new
+    - file: internal/server/storage_channel_test.go
+      agent: B
+      wave: 1
+      action: new
+    - file: internal/authz/permissions.go
+      agent: B
+      wave: 1
+      action: modify
+    - file: internal/server/storage_messagebus.go
+      agent: C
+      wave: 1
+      action: new
+    - file: internal/server/storage_messagebus_test.go
+      agent: C
+      wave: 1
+      action: new
+    - file: internal/server/storage_pipeline.go
+      agent: D
+      wave: 1
+      action: new
+    - file: internal/server/storage_pipeline_test.go
+      agent: D
+      wave: 1
+      action: new
+    - file: internal/server/storage.go
+      agent: E
+      wave: 2
+      action: modify
+      depends_on:
+        - B
+        - C
+        - D
+    - file: internal/server/server.go
+      agent: E
+      wave: 2
+      action: modify
+      depends_on:
+        - B
+        - C
+        - D
+    - file: internal/server/server_test.go
+      agent: E
+      wave: 2
+      action: modify
+      depends_on:
+        - B
+        - C
+        - D
+interface_contracts:
+    - name: StorageChannel — Channel CRUD methods
+      description: |-
+        New file internal/server/storage_channel.go in package server.
+        Provides in-memory Channel, ChannelConnection, and GoogleChannelConfig storage.
+        All methods follow the same patterns as existing Trigger methods in storage.go.
+      definition: |
+        // in package server
+
+        // Channel storage (key: "projects/{p}/locations/{l}/channels/{c}")
+        func (s *Storage) CreateChannel(ctx context.Context, parent, channelID string, ch *eventarcpb.Channel) (*eventarcpb.Channel, error)
+        func (s *Storage) GetChannel(ctx context.Context, name string) (*eventarcpb.Channel, error)
+        func (s *Storage) UpdateChannel(ctx context.Context, ch *eventarcpb.Channel, mask *fieldmaskpb.FieldMask) (*eventarcpb.Channel, error)
+        func (s *Storage) DeleteChannel(ctx context.Context, name string) error
+        func (s *Storage) ListChannels(ctx context.Context, parent string, pageSize int32, pageToken string) ([]*eventarcpb.Channel, string, error)
+
+        // ChannelConnection storage (key: "projects/{p}/locations/{l}/channelConnections/{cc}")
+        func (s *Storage) CreateChannelConnection(ctx context.Context, parent, connID string, conn *eventarcpb.ChannelConnection) (*eventarcpb.ChannelConnection, error)
+        func (s *Storage) GetChannelConnection(ctx context.Context, name string) (*eventarcpb.ChannelConnection, error)
+        func (s *Storage) DeleteChannelConnection(ctx context.Context, name string) error
+        func (s *Storage) ListChannelConnections(ctx context.Context, parent string, pageSize int32, pageToken string) ([]*eventarcpb.ChannelConnection, string, error)
+
+        // GoogleChannelConfig storage (singleton key: "projects/{p}/locations/{l}/googleChannelConfig")
+        // Get returns a zero-value config if none set (never NotFound for singletons).
+        func (s *Storage) GetGoogleChannelConfig(ctx context.Context, name string) (*eventarcpb.GoogleChannelConfig, error)
+        func (s *Storage) UpdateGoogleChannelConfig(ctx context.Context, cfg *eventarcpb.GoogleChannelConfig, mask *fieldmaskpb.FieldMask) (*eventarcpb.GoogleChannelConfig, error)
+      location: internal/server/storage_channel.go
+    - name: StorageMessageBus — MessageBus and Enrollment CRUD methods
+      description: |-
+        New file internal/server/storage_messagebus.go in package server.
+        Provides in-memory MessageBus and Enrollment storage.
+      definition: |
+        // in package server
+
+        // MessageBus storage (key: "projects/{p}/locations/{l}/messageBuses/{mb}")
+        func (s *Storage) CreateMessageBus(ctx context.Context, parent, busID string, mb *eventarcpb.MessageBus) (*eventarcpb.MessageBus, error)
+        func (s *Storage) GetMessageBus(ctx context.Context, name string) (*eventarcpb.MessageBus, error)
+        func (s *Storage) UpdateMessageBus(ctx context.Context, mb *eventarcpb.MessageBus, mask *fieldmaskpb.FieldMask) (*eventarcpb.MessageBus, error)
+        func (s *Storage) DeleteMessageBus(ctx context.Context, name string) error
+        func (s *Storage) ListMessageBuses(ctx context.Context, parent string, pageSize int32, pageToken string) ([]*eventarcpb.MessageBus, string, error)
+        // ListMessageBusEnrollments returns the names ([]string) of Enrollments whose
+        // MessageBus field equals the given bus name. Returns resource name strings,
+        // matching ListMessageBusEnrollmentsResponse.Enrollments which is []string.
+        func (s *Storage) ListMessageBusEnrollments(ctx context.Context, busName string, pageSize int32, pageToken string) ([]string, string, error)
+
+        // Enrollment storage (key: "projects/{p}/locations/{l}/enrollments/{e}")
+        func (s *Storage) CreateEnrollment(ctx context.Context, parent, enrollmentID string, en *eventarcpb.Enrollment) (*eventarcpb.Enrollment, error)
+        func (s *Storage) GetEnrollment(ctx context.Context, name string) (*eventarcpb.Enrollment, error)
+        func (s *Storage) UpdateEnrollment(ctx context.Context, en *eventarcpb.Enrollment, mask *fieldmaskpb.FieldMask) (*eventarcpb.Enrollment, error)
+        func (s *Storage) DeleteEnrollment(ctx context.Context, name string) error
+        func (s *Storage) ListEnrollments(ctx context.Context, parent string, pageSize int32, pageToken string) ([]*eventarcpb.Enrollment, string, error)
+      location: internal/server/storage_messagebus.go
+    - name: StoragePipeline — Pipeline and GoogleApiSource CRUD methods
+      description: |-
+        New file internal/server/storage_pipeline.go in package server.
+        Provides in-memory Pipeline and GoogleApiSource storage.
+      definition: |
+        // in package server
+
+        // Pipeline storage (key: "projects/{p}/locations/{l}/pipelines/{p}")
+        func (s *Storage) CreatePipeline(ctx context.Context, parent, pipelineID string, pl *eventarcpb.Pipeline) (*eventarcpb.Pipeline, error)
+        func (s *Storage) GetPipeline(ctx context.Context, name string) (*eventarcpb.Pipeline, error)
+        func (s *Storage) UpdatePipeline(ctx context.Context, pl *eventarcpb.Pipeline, mask *fieldmaskpb.FieldMask) (*eventarcpb.Pipeline, error)
+        func (s *Storage) DeletePipeline(ctx context.Context, name string) error
+        func (s *Storage) ListPipelines(ctx context.Context, parent string, pageSize int32, pageToken string) ([]*eventarcpb.Pipeline, string, error)
+
+        // GoogleApiSource storage (key: "projects/{p}/locations/{l}/googleApiSources/{s}")
+        func (s *Storage) CreateGoogleApiSource(ctx context.Context, parent, sourceID string, src *eventarcpb.GoogleApiSource) (*eventarcpb.GoogleApiSource, error)
+        func (s *Storage) GetGoogleApiSource(ctx context.Context, name string) (*eventarcpb.GoogleApiSource, error)
+        func (s *Storage) UpdateGoogleApiSource(ctx context.Context, src *eventarcpb.GoogleApiSource, mask *fieldmaskpb.FieldMask) (*eventarcpb.GoogleApiSource, error)
+        func (s *Storage) DeleteGoogleApiSource(ctx context.Context, name string) error
+        func (s *Storage) ListGoogleApiSources(ctx context.Context, parent string, pageSize int32, pageToken string) ([]*eventarcpb.GoogleApiSource, string, error)
+      location: internal/server/storage_pipeline.go
+    - name: Storage struct new fields
+      description: |-
+        Agent E adds new map fields to the Storage struct in storage.go and
+        initializes them in NewStorage(). This is the integration point after
+        all Wave 1 storage files are complete.
+      definition: |
+        // Added to Storage struct in internal/server/storage.go:
+        channels             map[string]*eventarcpb.Channel
+        channelConnections   map[string]*eventarcpb.ChannelConnection
+        googleChannelConfigs map[string]*eventarcpb.GoogleChannelConfig
+        messageBuses         map[string]*eventarcpb.MessageBus
+        enrollments          map[string]*eventarcpb.Enrollment
+        pipelines            map[string]*eventarcpb.Pipeline
+        googleApiSources     map[string]*eventarcpb.GoogleApiSource
+
+        // Each map initialized in NewStorage():
+        channels:             make(map[string]*eventarcpb.Channel),
+        channelConnections:   make(map[string]*eventarcpb.ChannelConnection),
+        googleChannelConfigs: make(map[string]*eventarcpb.GoogleChannelConfig),
+        messageBuses:         make(map[string]*eventarcpb.MessageBus),
+        enrollments:          make(map[string]*eventarcpb.Enrollment),
+        pipelines:            make(map[string]*eventarcpb.Pipeline),
+        googleApiSources:     make(map[string]*eventarcpb.GoogleApiSource),
+      location: internal/server/storage.go
+    - name: Binary content mode dispatch
+      description: |-
+        Dispatch() in internal/dispatcher/http.go must send binary content mode:
+        event attributes as ce-* HTTP headers, payload in body with Content-Type
+        from the event's DataContentType (default "application/json").
+      definition: |
+        // Binary content mode: per CloudEvents HTTP binding spec
+        // Required headers: Ce-Specversion, Ce-Type, Ce-Source, Ce-Id
+        // Optional: Ce-Subject, Ce-Time, Ce-Dataschema + any extensions as Ce-<name>
+        // Body: raw event data bytes (not JSON-marshaled envelope)
+        // Content-Type: event.DataContentType() or "application/json" if empty
+
+        // The existing Dispatch() signature is unchanged:
+        func (d *Dispatcher) Dispatch(ctx context.Context, trigger *eventarcpb.Trigger, event cloudevents.Event) (int, error)
+      location: internal/dispatcher/http.go
+waves:
+    - number: 1
+      agents:
+        - id: A
+          task: |
+            ## Context
+            You are implementing a binary content mode fix for the HTTP dispatcher
+            in the GCP Eventarc emulator.
+
+            ## Repository
+            /Users/dayna.blackwell/code/gcp-eventarc-emulator
+
+            ## What to implement
+
+            ### internal/dispatcher/http.go
+            Change the `Dispatch()` method to send events in CloudEvents HTTP
+            binary content mode instead of structured (JSON envelope) mode.
+
+            Binary content mode rules (CloudEvents HTTP binding spec):
+            - Required headers: `Ce-Specversion`, `Ce-Type`, `Ce-Source`, `Ce-Id`
+            - Optional headers: `Ce-Subject` (if non-empty), `Ce-Time` (if non-zero),
+              `Ce-Dataschema` (if non-empty)
+            - Extension attributes: each extension key becomes `Ce-<extension-name>` header
+            - Body: the raw event data bytes (call `event.DataBytes()` to get them, or
+              marshal via `event.MarshalJSON()` but only extract the data field — simplest:
+              use `event.Data()` raw bytes directly via the event struct)
+            - Content-Type header: `event.DataContentType()`, defaulting to
+              `"application/json"` if empty
+
+            Implementation approach for setting body + data content type:
+            1. Get data bytes: use `event.DataEncoded` field directly (it is `[]byte`)
+               or call `json.Marshal(event)` then extract the `"data"` field. The
+               simplest correct approach: serialize only the event data using
+               `event.MarshalJSON()` is NOT right (that gives structured mode). Instead:
+               - If `event.DataEncoded` is not nil/empty: use it directly as body
+               - Otherwise: body is empty (`[]byte{}`)
+            2. Build request with that body
+            3. Set Ce-* headers from event attributes
+            4. Set `Content-Type` to `event.DataContentType()` (fall back to `"application/json"`)
+
+            For the Ce-* headers, access event attributes via the event reader methods:
+            - `event.SpecVersion()` → `Ce-Specversion`
+            - `event.Type()` → `Ce-Type`
+            - `event.Source()` → `Ce-Source`
+            - `event.ID()` → `Ce-Id`
+            - `event.Subject()` → `Ce-Subject` (only if non-empty)
+            - `event.Time()` → `Ce-Time` as RFC3339 (only if non-zero)
+            - `event.DataSchema()` → `Ce-Dataschema` (only if non-empty)
+            - `event.Extensions()` → each key/value as `Ce-<key>: <value>` headers
+
+            Remove the `cloudEventsJSONContentType` constant and `json.Marshal(event)`
+            body encoding. Keep the `defaultCloudRunBaseURL`, `defaultTimeout`, and
+            `destinationURL` function unchanged.
+
+            ### internal/dispatcher/http_test.go
+            Update existing tests that currently assert `Content-Type:
+            application/cloudevents+json` to assert binary mode behavior instead:
+
+            1. `TestDispatch_HttpEndpoint_Success`: update to check that
+               `Content-Type` is `"application/json"` (binary mode, not structured).
+               Also check that `Ce-Specversion`, `Ce-Type`, `Ce-Source`, `Ce-Id`
+               headers are present and non-empty.
+
+            2. `TestDispatch_ContentType_IsCloudEventsJSON`: rename to
+               `TestDispatch_ContentType_IsBinaryMode` and update assertions:
+               - `Content-Type` should be `"application/json"` (not `"application/cloudevents+json"`)
+               - `Ce-Specversion: 1.0` header must be present
+               - `Ce-Type` header must be present and match the event type
+               - `Ce-Source` header must be present
+
+            3. Add a new test `TestDispatch_BinaryMode_Headers` that:
+               - Creates an event with a specific type, source, id, subject, and
+                 one extension (`testkey: testval`)
+               - Dispatches it
+               - Asserts all required Ce-* headers are present and correct values
+               - Asserts `Ce-Subject` is present (since subject is set)
+               - Asserts `Ce-Testkey: testval` header is present
+
+            ## Constraints
+            - Do NOT change the `Dispatch()` function signature.
+            - Do NOT change `destinationURL()`.
+            - The `cloudEventsJSONContentType` constant can be removed or repurposed
+              as `binaryModeDataContentType = "application/json"`.
+            - The `newTestEvent()` helper already sets type, source, and id — extend
+              it or create a separate helper for the header test.
+            - All existing non-content-type tests (404 handling, CloudRun destination,
+              unsupported destination) should continue to pass.
+
+            ## Verification gate
+            ```
+            go build ./internal/dispatcher/...
+            go vet ./internal/dispatcher/...
+            go test ./internal/dispatcher/... -v
+            ```
+          files:
+            - internal/dispatcher/http.go
+            - internal/dispatcher/http_test.go
+        - id: B
+          task: |
+            ## Context
+            You are implementing Channel, ChannelConnection, and GoogleChannelConfig
+            in-memory storage for the GCP Eventarc emulator, plus IAM permission
+            entries for their RPCs.
+
+            ## Repository
+            /Users/dayna.blackwell/code/gcp-eventarc-emulator
+
+            ## What to implement
+
+            ### internal/server/storage_channel.go (NEW FILE)
+            Create a new file in `package server`. This file adds Channel,
+            ChannelConnection, and GoogleChannelConfig CRUD methods to the
+            existing `*Storage` receiver. The `Storage` struct lives in
+            `internal/server/storage.go`; you are adding methods to it without
+            modifying that file.
+
+            IMPORTANT: The `Storage` struct currently has only `triggers` and
+            `providers` maps. Wave 2 (Agent E) will add the new map fields to
+            the struct after your file is complete. In the meantime, your methods
+            will reference fields that do not yet exist in the struct. This is
+            fine — the code will compile only after Agent E's wave merges.
+            Write the methods as if the following fields exist on Storage:
+            ```go
+            channels             map[string]*eventarcpb.Channel
+            channelConnections   map[string]*eventarcpb.ChannelConnection
+            googleChannelConfigs map[string]*eventarcpb.GoogleChannelConfig
+            ```
+
+            #### Channel methods
+            Storage key: `"{parent}/channels/{channelID}"`
+            e.g. `"projects/p/locations/l/channels/my-channel"`
+
+            ```go
+            func (s *Storage) CreateChannel(ctx context.Context, parent, channelID string, ch *eventarcpb.Channel) (*eventarcpb.Channel, error)
+            func (s *Storage) GetChannel(ctx context.Context, name string) (*eventarcpb.Channel, error)
+            func (s *Storage) UpdateChannel(ctx context.Context, ch *eventarcpb.Channel, mask *fieldmaskpb.FieldMask) (*eventarcpb.Channel, error)
+            func (s *Storage) DeleteChannel(ctx context.Context, name string) error
+            func (s *Storage) ListChannels(ctx context.Context, parent string, pageSize int32, pageToken string) ([]*eventarcpb.Channel, string, error)
+            ```
+
+            Patterns to follow (from storage.go):
+            - CreateChannel: check AlreadyExists, set Name/Uid/CreateTime/UpdateTime,
+              store cloned proto, return clone. Use `rand.Uint64()` for uid hex.
+            - GetChannel: RLock, lookup, return NotFound if missing, return clone.
+            - UpdateChannel: Lock, lookup, apply mask (supported fields: labels,
+              crypto_key_name, state), set UpdateTime, return clone.
+            - DeleteChannel: Lock, lookup, return NotFound if missing, delete.
+            - ListChannels: RLock, collect by prefix `"{parent}/channels/"`, sort by
+              name, paginate with integer token (same as ListTriggers pattern).
+
+            Clone helpers to add:
+            ```go
+            func cloneChannel(c *eventarcpb.Channel) *eventarcpb.Channel
+            func cloneChannelConnection(cc *eventarcpb.ChannelConnection) *eventarcpb.ChannelConnection
+            func cloneGoogleChannelConfig(cfg *eventarcpb.GoogleChannelConfig) *eventarcpb.GoogleChannelConfig
+            ```
+
+            #### ChannelConnection methods
+            Storage key: `"{parent}/channelConnections/{connID}"`
+            Note: No Update RPC for ChannelConnection — only Get, List, Create, Delete.
+
+            ```go
+            func (s *Storage) CreateChannelConnection(ctx context.Context, parent, connID string, conn *eventarcpb.ChannelConnection) (*eventarcpb.ChannelConnection, error)
+            func (s *Storage) GetChannelConnection(ctx context.Context, name string) (*eventarcpb.ChannelConnection, error)
+            func (s *Storage) DeleteChannelConnection(ctx context.Context, name string) error
+            func (s *Storage) ListChannelConnections(ctx context.Context, parent string, pageSize int32, pageToken string) ([]*eventarcpb.ChannelConnection, string, error)
+            ```
+
+            Prefix for list: `"{parent}/channelConnections/"`.
+            CreateChannelConnection sets Name, Uid (rand hex), CreateTime, UpdateTime.
+
+            #### GoogleChannelConfig methods
+            Storage key: `"{name}"` — the full resource name is the key directly,
+            e.g. `"projects/p/locations/l/googleChannelConfig"`.
+            Singleton: Get never returns NotFound — if no config is stored, return
+            a zero-value `&eventarcpb.GoogleChannelConfig{Name: name}`.
+
+            ```go
+            func (s *Storage) GetGoogleChannelConfig(ctx context.Context, name string) (*eventarcpb.GoogleChannelConfig, error)
+            func (s *Storage) UpdateGoogleChannelConfig(ctx context.Context, cfg *eventarcpb.GoogleChannelConfig, mask *fieldmaskpb.FieldMask) (*eventarcpb.GoogleChannelConfig, error)
+            ```
+
+            UpdateGoogleChannelConfig supported mask fields: `crypto_key_name`, `labels`.
+            If no config stored yet, create one. Always set UpdateTime. No LRO for
+            GoogleChannelConfig (returns the config directly, not an operation).
+
+            ### internal/server/storage_channel_test.go (NEW FILE)
+            Table-driven tests in `package server` following the existing
+            `storage_test.go` pattern.
+
+            Tests to write:
+            - `TestStorageCreateChannel_Success`: create, verify name/uid/times set
+            - `TestStorageCreateChannel_AlreadyExists`: duplicate returns AlreadyExists
+            - `TestStorageGetChannel_NotFound`: missing returns NotFound
+            - `TestStorageDeleteChannel_NotFound`: delete missing returns NotFound
+            - `TestStorageListChannels_Pagination`: create 5, page by 2, verify all
+            - `TestStorageCreateChannelConnection_Success`: create, verify fields
+            - `TestStorageGetChannelConnection_NotFound`: returns NotFound
+            - `TestStorageDeleteChannelConnection_Success`: create then delete, verify gone
+            - `TestStorageGetGoogleChannelConfig_Default`: get without create returns
+              zero-value config (not error)
+            - `TestStorageUpdateGoogleChannelConfig_Success`: update, verify
+              UpdateTime set and fields applied
+
+            ### internal/authz/permissions.go (MODIFY)
+            Add new entries to `permissionMap` for all Channel, ChannelConnection,
+            GoogleChannelConfig, MessageBus, Enrollment, Pipeline, and GoogleApiSource
+            RPCs. Add ALL of the following (even though your storage files only cover
+            Channel/ChannelConnection/GoogleChannelConfig — adding all at once avoids
+            a conflict with other agents):
+
+            ```go
+            // Channel
+            "GetChannel":    {Permission: "eventarc.channels.get"},
+            "ListChannels":  {Permission: "eventarc.channels.list"},
+            "CreateChannel": {Permission: "eventarc.channels.create"},
+            "UpdateChannel": {Permission: "eventarc.channels.update"},
+            "DeleteChannel": {Permission: "eventarc.channels.delete"},
+            // ChannelConnection
+            "GetChannelConnection":    {Permission: "eventarc.channelConnections.get"},
+            "ListChannelConnections":  {Permission: "eventarc.channelConnections.list"},
+            "CreateChannelConnection": {Permission: "eventarc.channelConnections.create"},
+            "DeleteChannelConnection": {Permission: "eventarc.channelConnections.delete"},
+            // GoogleChannelConfig
+            "GetGoogleChannelConfig":    {Permission: "eventarc.googleChannelConfigs.get"},
+            "UpdateGoogleChannelConfig": {Permission: "eventarc.googleChannelConfigs.update"},
+            // MessageBus
+            "GetMessageBus":             {Permission: "eventarc.messageBuses.get"},
+            "ListMessageBuses":          {Permission: "eventarc.messageBuses.list"},
+            "ListMessageBusEnrollments": {Permission: "eventarc.messageBuses.listEnrollments"},
+            "CreateMessageBus":          {Permission: "eventarc.messageBuses.create"},
+            "UpdateMessageBus":          {Permission: "eventarc.messageBuses.update"},
+            "DeleteMessageBus":          {Permission: "eventarc.messageBuses.delete"},
+            // Enrollment
+            "GetEnrollment":    {Permission: "eventarc.enrollments.get"},
+            "ListEnrollments":  {Permission: "eventarc.enrollments.list"},
+            "CreateEnrollment": {Permission: "eventarc.enrollments.create"},
+            "UpdateEnrollment": {Permission: "eventarc.enrollments.update"},
+            "DeleteEnrollment": {Permission: "eventarc.enrollments.delete"},
+            // Pipeline
+            "GetPipeline":    {Permission: "eventarc.pipelines.get"},
+            "ListPipelines":  {Permission: "eventarc.pipelines.list"},
+            "CreatePipeline": {Permission: "eventarc.pipelines.create"},
+            "UpdatePipeline": {Permission: "eventarc.pipelines.update"},
+            "DeletePipeline": {Permission: "eventarc.pipelines.delete"},
+            // GoogleApiSource
+            "GetGoogleApiSource":    {Permission: "eventarc.googleApiSources.get"},
+            "ListGoogleApiSources":  {Permission: "eventarc.googleApiSources.list"},
+            "CreateGoogleApiSource": {Permission: "eventarc.googleApiSources.create"},
+            "UpdateGoogleApiSource": {Permission: "eventarc.googleApiSources.update"},
+            "DeleteGoogleApiSource": {Permission: "eventarc.googleApiSources.delete"},
+            ```
+
+            ## Constraints
+            - Do NOT modify internal/server/storage.go (the Storage struct and
+              NewStorage() — Agent E owns that file in Wave 2).
+            - New files must be `package server` (not a sub-package).
+            - Follow exact clone/error patterns from storage.go: use proto.Clone(),
+              status.Errorf with codes.AlreadyExists / codes.NotFound.
+            - Import paths must match existing usage:
+              `eventarcpb "cloud.google.com/go/eventarc/apiv1/eventarcpb"`
+              `"google.golang.org/protobuf/proto"`
+              `"google.golang.org/grpc/codes"`, `"google.golang.org/grpc/status"`
+              `"google.golang.org/protobuf/types/known/fieldmaskpb"`
+              `"google.golang.org/protobuf/types/known/timestamppb"`
+              `"sync"`, `"fmt"`, `"math/rand"`, `"sort"`, `"strconv"`, `"strings"`
+
+            ## Verification gate
+            ```
+            go build ./internal/server/...
+            go vet ./internal/server/...
+            go test ./internal/server/... -run TestStorageChannel -v
+            go test ./internal/authz/... -v
+            ```
+            Note: go build may fail if Agent E has not yet merged (Storage struct
+            fields missing). The focused test run will also fail until merge. To
+            verify your file syntax, use `go vet` in isolation or check for
+            compile errors with your editor. The full build passes after Wave 2.
+          files:
+            - internal/server/storage_channel.go
+            - internal/server/storage_channel_test.go
+            - internal/authz/permissions.go
+        - id: C
+          task: |
+            ## Context
+            You are implementing MessageBus and Enrollment in-memory storage for
+            the GCP Eventarc emulator.
+
+            ## Repository
+            /Users/dayna.blackwell/code/gcp-eventarc-emulator
+
+            ## What to implement
+
+            ### internal/server/storage_messagebus.go (NEW FILE)
+            Create a new file in `package server`. This file adds MessageBus and
+            Enrollment CRUD methods to the existing `*Storage` receiver. The
+            `Storage` struct lives in `internal/server/storage.go`; you are adding
+            methods to it without modifying that file.
+
+            IMPORTANT: The `Storage` struct currently has only `triggers` and
+            `providers` maps. Wave 2 (Agent E) will add the new map fields to
+            the struct after your file is complete. In the meantime, your methods
+            will reference fields that do not yet exist in the struct. This is
+            expected — the code will fully compile only after Agent E merges.
+            Write the methods as if the following fields exist on Storage:
+            ```go
+            messageBuses map[string]*eventarcpb.MessageBus
+            enrollments  map[string]*eventarcpb.Enrollment
+            ```
+
+            #### MessageBus methods
+            Storage key: `"{parent}/messageBuses/{messageBusID}"`
+            e.g. `"projects/p/locations/l/messageBuses/my-bus"`
+
+            ```go
+            func (s *Storage) CreateMessageBus(ctx context.Context, parent, busID string, mb *eventarcpb.MessageBus) (*eventarcpb.MessageBus, error)
+            func (s *Storage) GetMessageBus(ctx context.Context, name string) (*eventarcpb.MessageBus, error)
+            func (s *Storage) UpdateMessageBus(ctx context.Context, mb *eventarcpb.MessageBus, mask *fieldmaskpb.FieldMask) (*eventarcpb.MessageBus, error)
+            func (s *Storage) DeleteMessageBus(ctx context.Context, name string) error
+            func (s *Storage) ListMessageBuses(ctx context.Context, parent string, pageSize int32, pageToken string) ([]*eventarcpb.MessageBus, string, error)
+            // Returns []string (enrollment resource names), NOT []*Enrollment.
+            // ListMessageBusEnrollmentsResponse.Enrollments is []string per the proto definition.
+            func (s *Storage) ListMessageBusEnrollments(ctx context.Context, busName string, pageSize int32, pageToken string) ([]string, string, error)
+            ```
+
+            Patterns (from storage.go):
+            - CreateMessageBus: AlreadyExists check, set Name/Uid/CreateTime/UpdateTime
+              (note: MessageBus also has Etag — set to a random hex string, same uid
+              approach). Store clone, return clone.
+            - GetMessageBus: RLock, lookup, NotFound if missing.
+            - UpdateMessageBus: Lock, lookup, apply mask (fields: labels, annotations,
+              display_name, crypto_key_name, logging_config), set UpdateTime/Etag.
+            - DeleteMessageBus: Lock, lookup, NotFound if missing, delete.
+            - ListMessageBuses: RLock, prefix `"{parent}/messageBuses/"`, sort by name,
+              paginate with integer token.
+            - ListMessageBusEnrollments: RLock, scan ALL enrollments, return those
+              where `enrollment.GetMessageBus() == busName`. Paginate same way.
+
+            Clone helpers to add:
+            ```go
+            func cloneMessageBus(mb *eventarcpb.MessageBus) *eventarcpb.MessageBus
+            func cloneEnrollment(en *eventarcpb.Enrollment) *eventarcpb.Enrollment
+            ```
+
+            #### Enrollment methods
+            Storage key: `"{parent}/enrollments/{enrollmentID}"`
+
+            ```go
+            func (s *Storage) CreateEnrollment(ctx context.Context, parent, enrollmentID string, en *eventarcpb.Enrollment) (*eventarcpb.Enrollment, error)
+            func (s *Storage) GetEnrollment(ctx context.Context, name string) (*eventarcpb.Enrollment, error)
+            func (s *Storage) UpdateEnrollment(ctx context.Context, en *eventarcpb.Enrollment, mask *fieldmaskpb.FieldMask) (*eventarcpb.Enrollment, error)
+            func (s *Storage) DeleteEnrollment(ctx context.Context, name string) error
+            func (s *Storage) ListEnrollments(ctx context.Context, parent string, pageSize int32, pageToken string) ([]*eventarcpb.Enrollment, string, error)
+            ```
+
+            Prefix for list: `"{parent}/enrollments/"`.
+            UpdateEnrollment mask fields: labels, annotations, display_name, cel_match,
+            message_bus, destination.
+            Enrollment also has Etag — set on create, update on UpdateEnrollment.
+
+            ### internal/server/storage_messagebus_test.go (NEW FILE)
+            Table-driven tests in `package server`.
+
+            Tests to write:
+            - `TestStorageCreateMessageBus_Success`: verify Name/Uid/CreateTime/UpdateTime/Etag
+            - `TestStorageCreateMessageBus_AlreadyExists`: AlreadyExists on duplicate
+            - `TestStorageGetMessageBus_NotFound`: NotFound for missing
+            - `TestStorageDeleteMessageBus_NotFound`: NotFound on delete missing
+            - `TestStorageListMessageBuses_Pagination`: 5 buses, page by 2
+            - `TestStorageCreateEnrollment_Success`: verify fields
+            - `TestStorageGetEnrollment_NotFound`: NotFound
+            - `TestStorageListMessageBusEnrollments_FiltersByBus`: create 2 enrollments
+              for bus A (set enrollment.MessageBus = busA name), 1 for bus B, verify
+              ListMessageBusEnrollments for bus A returns exactly 2 name strings
+              ([]string, not []*Enrollment — the proto ListMessageBusEnrollmentsResponse
+              has Enrollments as []string resource names)
+
+            ## Constraints
+            - Do NOT modify internal/server/storage.go.
+            - New files must be `package server`.
+            - Same import conventions as existing storage.go.
+            - `eventarcpb.MessageBus` has an `Etag` field — set it to rand hex on
+              create/update.
+            - `eventarcpb.Enrollment` also has an `Etag` field.
+
+            ## Verification gate
+            ```
+            go build ./internal/server/...
+            go vet ./internal/server/...
+            go test ./internal/server/... -run TestStorageMessageBus -v
+            go test ./internal/server/... -run TestStorageEnrollment -v
+            go test ./internal/server/... -run TestStorageListMessageBus -v
+            ```
+            Note: `go build` may report missing struct fields until Agent E merges.
+            Use `go vet` to check syntax; full build passes after Wave 2.
+          files:
+            - internal/server/storage_messagebus.go
+            - internal/server/storage_messagebus_test.go
+        - id: D
+          task: |
+            ## Context
+            You are implementing Pipeline and GoogleApiSource in-memory storage
+            for the GCP Eventarc emulator.
+
+            ## Repository
+            /Users/dayna.blackwell/code/gcp-eventarc-emulator
+
+            ## What to implement
+
+            ### internal/server/storage_pipeline.go (NEW FILE)
+            Create a new file in `package server`. This file adds Pipeline and
+            GoogleApiSource CRUD methods to the existing `*Storage` receiver. The
+            `Storage` struct lives in `internal/server/storage.go`; you are adding
+            methods to it without modifying that file.
+
+            IMPORTANT: The `Storage` struct currently has only `triggers` and
+            `providers` maps. Wave 2 (Agent E) will add the new map fields to
+            the struct after your file is complete. In the meantime, your methods
+            will reference fields that do not yet exist in the struct. This is
+            expected — write the methods as if these fields exist on Storage:
+            ```go
+            pipelines        map[string]*eventarcpb.Pipeline
+            googleApiSources map[string]*eventarcpb.GoogleApiSource
+            ```
+
+            #### Pipeline methods
+            Storage key: `"{parent}/pipelines/{pipelineID}"`
+            e.g. `"projects/p/locations/l/pipelines/my-pipeline"`
+
+            ```go
+            func (s *Storage) CreatePipeline(ctx context.Context, parent, pipelineID string, pl *eventarcpb.Pipeline) (*eventarcpb.Pipeline, error)
+            func (s *Storage) GetPipeline(ctx context.Context, name string) (*eventarcpb.Pipeline, error)
+            func (s *Storage) UpdatePipeline(ctx context.Context, pl *eventarcpb.Pipeline, mask *fieldmaskpb.FieldMask) (*eventarcpb.Pipeline, error)
+            func (s *Storage) DeletePipeline(ctx context.Context, name string) error
+            func (s *Storage) ListPipelines(ctx context.Context, parent string, pageSize int32, pageToken string) ([]*eventarcpb.Pipeline, string, error)
+            ```
+
+            Patterns (from storage.go):
+            - CreatePipeline: AlreadyExists check, set Name/Uid/CreateTime/UpdateTime.
+              Pipeline has Etag — set to rand hex on create.
+            - GetPipeline: RLock, NotFound if missing.
+            - UpdatePipeline: apply mask fields: labels, annotations, display_name,
+              destinations, mediations, crypto_key_name, input_payload_format,
+              logging_config, retry_policy. Update UpdateTime and Etag.
+            - DeletePipeline: NotFound if missing.
+            - ListPipelines: prefix `"{parent}/pipelines/"`, sort by name, integer
+              page token.
+
+            Clone helpers to add:
+            ```go
+            func clonePipeline(pl *eventarcpb.Pipeline) *eventarcpb.Pipeline
+            func cloneGoogleApiSource(src *eventarcpb.GoogleApiSource) *eventarcpb.GoogleApiSource
+            ```
+
+            #### GoogleApiSource methods
+            Storage key: `"{parent}/googleApiSources/{sourceID}"`
+
+            ```go
+            func (s *Storage) CreateGoogleApiSource(ctx context.Context, parent, sourceID string, src *eventarcpb.GoogleApiSource) (*eventarcpb.GoogleApiSource, error)
+            func (s *Storage) GetGoogleApiSource(ctx context.Context, name string) (*eventarcpb.GoogleApiSource, error)
+            func (s *Storage) UpdateGoogleApiSource(ctx context.Context, src *eventarcpb.GoogleApiSource, mask *fieldmaskpb.FieldMask) (*eventarcpb.GoogleApiSource, error)
+            func (s *Storage) DeleteGoogleApiSource(ctx context.Context, name string) error
+            func (s *Storage) ListGoogleApiSources(ctx context.Context, parent string, pageSize int32, pageToken string) ([]*eventarcpb.GoogleApiSource, string, error)
+            ```
+
+            Prefix for list: `"{parent}/googleApiSources/"`.
+            GoogleApiSource has Etag — set on create/update.
+            UpdateGoogleApiSource mask fields: labels, annotations, display_name,
+            destination, crypto_key_name, logging_config.
+
+            ### internal/server/storage_pipeline_test.go (NEW FILE)
+            Table-driven tests in `package server`.
+
+            Tests to write:
+            - `TestStorageCreatePipeline_Success`: verify Name/Uid/CreateTime/UpdateTime/Etag
+            - `TestStorageCreatePipeline_AlreadyExists`: AlreadyExists on duplicate
+            - `TestStorageGetPipeline_NotFound`: NotFound for missing
+            - `TestStorageDeletePipeline_NotFound`: NotFound on delete missing
+            - `TestStorageListPipelines_Pagination`: 5 pipelines, page by 2
+            - `TestStorageCreateGoogleApiSource_Success`: verify fields
+            - `TestStorageGetGoogleApiSource_NotFound`: NotFound
+            - `TestStorageUpdateGoogleApiSource_Success`: update display_name,
+              verify UpdateTime updated
+
+            ## Constraints
+            - Do NOT modify internal/server/storage.go.
+            - New files must be `package server`.
+            - Same import conventions as existing storage.go.
+            - `eventarcpb.Pipeline` and `eventarcpb.GoogleApiSource` both have `Etag`.
+            - The `Pipeline` type has many nested message fields (Destinations, Mediations,
+              etc.) — do not deep-validate them, just store/retrieve as-is using proto.Clone.
+
+            ## Verification gate
+            ```
+            go build ./internal/server/...
+            go vet ./internal/server/...
+            go test ./internal/server/... -run TestStoragePipeline -v
+            go test ./internal/server/... -run TestStorageGoogleApiSource -v
+            ```
+            Note: `go build` may report missing struct fields until Agent E merges.
+          files:
+            - internal/server/storage_pipeline.go
+            - internal/server/storage_pipeline_test.go
+    - number: 2
+      agents:
+        - id: E
+          task: |
+            ## Context
+            You are wiring all new storage maps into the Storage struct and
+            implementing all missing Eventarc RPC methods on the Server. This is
+            the integration wave — Agents B, C, D from Wave 1 have already created
+            storage_channel.go, storage_messagebus.go, and storage_pipeline.go with
+            their methods. Your job is to complete the plumbing.
+
+            ## Repository
+            /Users/dayna.blackwell/code/gcp-eventarc-emulator
+
+            ## What to implement
+
+            ### internal/server/storage.go (MODIFY)
+            1. Add 7 new map fields to the `Storage` struct (after the existing
+               `providers` field):
+               ```go
+               channels             map[string]*eventarcpb.Channel
+               channelConnections   map[string]*eventarcpb.ChannelConnection
+               googleChannelConfigs map[string]*eventarcpb.GoogleChannelConfig
+               messageBuses         map[string]*eventarcpb.MessageBus
+               enrollments          map[string]*eventarcpb.Enrollment
+               pipelines            map[string]*eventarcpb.Pipeline
+               googleApiSources     map[string]*eventarcpb.GoogleApiSource
+               ```
+
+            2. In `NewStorage()`, initialize all 7 new maps (after the existing
+               `providers: make(...)` line):
+               ```go
+               channels:             make(map[string]*eventarcpb.Channel),
+               channelConnections:   make(map[string]*eventarcpb.ChannelConnection),
+               googleChannelConfigs: make(map[string]*eventarcpb.GoogleChannelConfig),
+               messageBuses:         make(map[string]*eventarcpb.MessageBus),
+               enrollments:          make(map[string]*eventarcpb.Enrollment),
+               pipelines:            make(map[string]*eventarcpb.Pipeline),
+               googleApiSources:     make(map[string]*eventarcpb.GoogleApiSource),
+               ```
+
+            3. Do NOT modify any existing methods. Only add the 7 fields to the
+               struct and initialize them in NewStorage(). All the actual methods
+               live in the new files from Wave 1.
+
+            ### internal/server/server.go (MODIFY)
+            Add RPC method implementations for all 8 resource groups. Follow the
+            exact same pattern as the existing Trigger RPCs (GetTrigger, etc.).
+
+            Structure: for each resource, add a comment block header, then implement
+            each RPC method. Each method follows this pattern:
+            1. Validate required fields (name/parent/ID/resource) → codes.InvalidArgument
+            2. Call checkPermission with the appropriate permission string
+            3. Delegate to storage method
+            4. Return result or LRO
+
+            #### Channel RPCs (add after Provider RPCs, ~line 270)
+            ```go
+            // -------------------------------------------------------------------------
+            // Channel RPCs
+            // -------------------------------------------------------------------------
+
+            func (s *Server) GetChannel(ctx context.Context, req *eventarcpb.GetChannelRequest) (*eventarcpb.Channel, error)
+            // → validate req.GetName() != "", checkPermission("eventarc.channels.get", name), s.storage.GetChannel
+
+            func (s *Server) ListChannels(ctx context.Context, req *eventarcpb.ListChannelsRequest) (*eventarcpb.ListChannelsResponse, error)
+            // → validate req.GetParent() != "", checkPermission("eventarc.channels.list", parent),
+            // → s.storage.ListChannels, return &eventarcpb.ListChannelsResponse{Channels: ..., NextPageToken: ...}
+
+            func (s *Server) CreateChannel(ctx context.Context, req *eventarcpb.CreateChannelRequest) (*longrunningpb.Operation, error)
+            // → validate parent/channel_id/channel != nil, checkPermission create,
+            // → s.storage.CreateChannel, s.lro.CreateDone(parent, channel)
+
+            func (s *Server) UpdateChannel(ctx context.Context, req *eventarcpb.UpdateChannelRequest) (*longrunningpb.Operation, error)
+            // → validate req.GetChannel() != nil && name != "", parent from name via parentFromResource("channels", name),
+            // → checkPermission update, s.storage.UpdateChannel, s.lro.CreateDone(parent, channel)
+
+            func (s *Server) DeleteChannel(ctx context.Context, req *eventarcpb.DeleteChannelRequest) (*longrunningpb.Operation, error)
+            // → validate name, parent from name, checkPermission delete, s.storage.DeleteChannel,
+            // → s.lro.CreateDone(parent, &emptypb.Empty{})
+            ```
+
+            #### ChannelConnection RPCs
+            Get, List, Create (LRO), Delete (LRO). No Update.
+            Request field for Create: `req.GetChannelConnection()`, `req.GetChannelConnectionId()`.
+
+            #### GoogleChannelConfig RPCs
+            Get and Update only (singleton, no Create/Delete, no LRO).
+            ```go
+            func (s *Server) GetGoogleChannelConfig(...) (*eventarcpb.GoogleChannelConfig, error)
+            func (s *Server) UpdateGoogleChannelConfig(...) (*eventarcpb.GoogleChannelConfig, error)
+            ```
+            Both return the config directly (not an LRO).
+            GetGoogleChannelConfig validates `req.GetName() != ""`.
+            UpdateGoogleChannelConfig validates `req.GetGoogleChannelConfig() != nil`.
+
+            #### MessageBus RPCs
+            Get, List, ListMessageBusEnrollments, Create (LRO), Update (LRO), Delete (LRO).
+            ListMessageBusEnrollments: parent is the MessageBus name, returns
+            `*eventarcpb.ListMessageBusEnrollmentsResponse{Enrollments: ...}`.
+            Validate `req.GetParent() != ""` for ListMessageBusEnrollments.
+            The `req.GetMessageBusId()` field is used for Create.
+
+            #### Enrollment RPCs
+            Get, List, Create (LRO), Update (LRO), Delete (LRO).
+            The `req.GetEnrollmentId()` field is used for Create.
+
+            #### Pipeline RPCs
+            Get, List, Create (LRO), Update (LRO), Delete (LRO).
+            The `req.GetPipelineId()` field is used for Create.
+
+            #### GoogleApiSource RPCs
+            Get, List, Create (LRO), Update (LRO), Delete (LRO).
+            The `req.GetGoogleApiSourceId()` field is used for Create.
+
+            #### parentFromResource helper
+            The existing `parentFromName()` is hardcoded to strip `/triggers/<id>`.
+            Add a general helper for other resource types:
+            ```go
+            // parentFromResource extracts the parent from a full resource name by
+            // stripping the last two path segments ("/{resourceType}/{id}").
+            // e.g. "projects/p/locations/l/channels/c" → "projects/p/locations/l"
+            func parentFromResource(name string) string {
+                // Find the second-to-last slash
+                idx := strings.LastIndex(name, "/")
+                if idx < 0 {
+                    return name
+                }
+                name = name[:idx]
+                idx = strings.LastIndex(name, "/")
+                if idx < 0 {
+                    return name
+                }
+                return name[:idx]
+            }
+            ```
+            Use this helper for all new resource types (Channel, ChannelConnection,
+            MessageBus, Enrollment, Pipeline, GoogleApiSource) instead of
+            creating per-resource variants.
+
+            ### internal/server/server_test.go (MODIFY)
+            Add test functions for new RPCs. Follow the table-driven pattern in the
+            existing file. Add at minimum:
+
+            - `TestCreateChannel_Success`: create a channel, verify LRO done, then
+              GetChannel returns it.
+            - `TestGetChannel_NotFound`: get non-existent channel.
+            - `TestListChannels_Empty`: list returns empty slice.
+            - `TestCreateChannelConnection_Success`: create, verify LRO done.
+            - `TestGetGoogleChannelConfig_Default`: get returns non-error (singleton).
+            - `TestUpdateGoogleChannelConfig_Success`: update, verify returned config
+              has updated field.
+            - `TestCreateMessageBus_Success`: create, LRO done, GetMessageBus works.
+            - `TestGetMessageBus_NotFound`: get returns NotFound.
+            - `TestCreateEnrollment_Success`: create, LRO done, GetEnrollment works.
+            - `TestCreatePipeline_Success`: create, LRO done, GetPipeline works.
+            - `TestCreateGoogleApiSource_Success`: create, LRO done, GetGoogleApiSource works.
+
+            Use `newTestServer(t)` (existing helper in server_test.go) to create
+            the server. Build minimal proto instances as needed (no required fields
+            beyond name/parent — these are emulator tests).
+
+            ## Constraints
+            - Only modify storage.go to add struct fields + NewStorage() init lines.
+            - Do NOT add methods to storage.go (those live in the new wave-1 files).
+            - Do NOT change existing RPC implementations or Trigger methods.
+            - Use `parentFromResource(name)` for all new resource types.
+            - Preserve the existing `parentFromName()` function for Trigger backward
+              compatibility.
+            - All new imports must be added to server.go's import block. The following
+              are already imported: context, fmt, strings, eventarcpb, longrunningpb,
+              emulatorauth, lro, grpc/codes, grpc/status, emptypb.
+
+            ## Verification gate
+            ```
+            go build ./...
+            go vet ./...
+            go test ./... -v
+            ```
+            After Agent E merges, the full build should pass and all tests green.
+          files:
+            - internal/server/storage.go
+            - internal/server/server.go
+            - internal/server/server_test.go
+          dependencies:
+            - B
+            - C
+            - D
+quality_gates:
+    level: standard
+    gates:
+        - type: build
+          command: go build ./...
+          required: true
+        - type: lint
+          command: go vet ./...
+          required: true
+        - type: test
+          command: go test ./...
+          required: true
+pre_mortem:
+    overall_risk: medium
+    rows:
+        - scenario: |-
+            Wave 1 storage agents write methods referencing struct fields that don't
+            exist yet (channels, messageBuses, etc.). The go compiler will reject
+            the new files until Agent E adds those fields in Wave 2. Individual
+            agent builds will fail until Wave 2 merges.
+          likelihood: high
+          impact: low
+          mitigation: |-
+            This is expected and by design. Agent prompts explicitly warn about this.
+            The verification gate for Wave 1 agents uses `go vet` (syntax check)
+            instead of `go build`. Full build is gated on Wave 2.
+        - scenario: |-
+            Agent B modifies permissions.go adding all permission entries. If the
+            exact RPC method name strings don't match what the gRPC generated code
+            uses, IAM checks will silently pass (no matching entry). This is a
+            correctness risk, not a build failure.
+          likelihood: low
+          impact: medium
+          mitigation: |-
+            The permissionMap keys are the proto service method names (e.g.
+            "GetChannel"), which exactly match the RPC method names on the Server.
+            The existing triggers use this exact pattern. The agent prompt specifies
+            the exact key names to use. Verify by grepping eventarc_grpc.pb.go for
+            the method names if unsure.
+        - scenario: |-
+            Binary content mode test updates in http_test.go may miss the two tests
+            that assert cloudEventsJSONContentType and leave them failing.
+          likelihood: medium
+          impact: low
+          mitigation: |-
+            Agent A's prompt explicitly lists both tests by name that need updating
+            (TestDispatch_HttpEndpoint_Success and TestDispatch_ContentType_IsCloudEventsJSON).
+            The verification gate runs all dispatcher tests with -v.
+        - scenario: |-
+            Agent E's parentFromResource() helper strips two path segments but
+            GoogleChannelConfig is a singleton with no trailing ID segment
+            (name is "projects/p/locations/l/googleChannelConfig"). If
+            parentFromResource is used for GoogleChannelConfig, it would return
+            "projects/p/locations" instead of "projects/p/locations/l".
+          likelihood: high
+          impact: low
+          mitigation: |-
+            GoogleChannelConfig RPCs do not need a parent (Get/Update only, no LRO
+            parent context needed). Agent E's prompt notes that GoogleChannelConfig
+            returns the config directly (not an LRO), so parentFromResource is never
+            called for it.
+        - scenario: |-
+            The ListMessageBusEnrollments RPC lists enrollments for a given message
+            bus parent (the bus name is the parent). If Agent C stores enrollments
+            by their own key (projects/p/locations/l/enrollments/e) but
+            ListMessageBusEnrollments must filter by the enrollment's messageBus
+            field, a naïve prefix scan won't work.
+          likelihood: medium
+          impact: medium
+          mitigation: |-
+            Agent C's prompt specifies: ListMessageBusEnrollments scans ALL
+            enrollments, filters by enrollment.GetMessageBus() == busName, and
+            returns the enrollment resource names ([]string) — matching the proto
+            definition of ListMessageBusEnrollmentsResponse.Enrollments which is
+            []string, not []*Enrollment. The storage method signature reflects this.
+known_issues:
+    - title: False positive test_cascade on router_test.go
+      description: |-
+        pre-wave-validate test_cascade flags internal/router/router_test.go lines
+        191 and 203 because they contain the string "application/json". These
+        lines use that string as a CloudEvents event filter attribute value in the
+        router matching tests, not as an HTTP Content-Type assertion. The router
+        tests are completely unaffected by Agent A binary mode changes. No changes
+        to router_test.go are needed.
+critic_report:
+    verdict: ISSUES
+    agent_reviews:
+        A:
+            agent_id: A
+            verdict: ISSUES
+            issues:
+                - check: side_effect_completeness
+                  severity: warning
+                  description: 'internal/router/router_test.go is listed in file_ownership for Agent A with action: modify, but Agent A''s task brief contains no instructions for modifying this file. The known_issues section explicitly states no changes to router_test.go are needed. The ownership entry is misleading and should either be removed from file_ownership or the action changed to a non-modify marker.'
+                  file: internal/router/router_test.go
+        B:
+            agent_id: B
+            verdict: PASS
+        C:
+            agent_id: C
+            verdict: PASS
+        D:
+            agent_id: D
+            verdict: PASS
+        E:
+            agent_id: E
+            verdict: PASS
+    summary: 'Four of five agents (B, C, D, E) have accurate briefs with verified symbols, patterns, and import chains. Agent A has one issue: internal/router/router_test.go appears in file_ownership with action: modify, but Agent A''s task description contains no instructions for modifying it — the known_issues section explicitly notes no changes to that file are needed. This ownership entry will cause Agent A to believe it must touch a file it should leave alone, or will cause confusion when the agent skips it. All other symbols, patterns, proto types, import paths, and helper functions verified against the codebase. The CloudEvents SDK DataEncoded field, all reader methods (SpecVersion, Type, Source, ID, Subject, DataSchema, DataContentType, Extensions), and all eventarcpb proto types (Channel, ChannelConnection, GoogleChannelConfig, MessageBus, Enrollment, Pipeline, GoogleApiSource) are confirmed present at the expected import paths. The lro.CreateDone, checkPermission, newTestServer, parentFromName, permissionMap, and proto.Clone patterns are all verified. ListMessageBusEnrollmentsResponse.Enrollments is confirmed []string matching the contract.'
+    reviewed_at: "2026-04-02T21:55:25Z"
+    issue_count: 1
+state: SCOUT_PENDING
+injection_method: hook
