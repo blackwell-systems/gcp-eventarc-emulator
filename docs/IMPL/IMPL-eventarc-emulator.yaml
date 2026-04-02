@@ -709,6 +709,7 @@ waves:
             - internal/server/server.go
             - internal/server/server_test.go
             - internal/server/grpc.go
+      base_commit: 6741bc5199670ec0cc905a4f0a31e553145fe100
     - number: 3
       agents:
         - id: A
@@ -1339,15 +1340,55 @@ quality_gates:
         - type: test
           command: go test ./...
           required: true
+post_merge_checklist:
+    groups:
+        - title: Background Service Initialization
+          items:
+            - description: Verify if main.go needs initialization in Server constructor
+            - description: Verify if storage_test.go needs initialization in Server constructor
+            - description: Verify if store_test.go needs initialization in Server constructor
+            - description: Verify if server_test.go needs initialization in Server constructor
 completion_reports:
     A:
         status: complete
-        commit: 54cee54
+        branch: saw/eventarc-emulator/wave2-agent-A
+        commit: 7fa5986
+        files_changed:
+            - internal/authz/permissions.go
+            - internal/authz/permissions_test.go
+        files_created:
+            - internal/authz/permissions.go
+            - internal/authz/permissions_test.go
+        tests_added:
+            - TestGetPermission_KnownOperation
+            - TestGetPermission_UnknownOperation
+            - TestNormalizeTriggerResource
+            - TestNormalizeParentForCreate
         verification: PASS
+        notes: All 15 tests pass. permissionMap covers all 7 Eventarc operations (5 trigger + 2 provider). GetPermission, NormalizeParentForCreate, NormalizeTriggerResource all implemented. Pre-commit hook confirmed build+vet clean.
     B:
         status: complete
-        commit: 9bf6470
+        branch: saw/eventarc-emulator/wave2-agent-B
+        commit: 00abd0f
+        files_changed:
+            - internal/server/server.go
+            - internal/server/server_test.go
+            - internal/server/grpc.go
+        files_created:
+            - internal/server/server.go
+            - internal/server/server_test.go
+            - internal/server/grpc.go
+        tests_added:
+            - TestCreateTrigger_Success
+            - TestCreateTrigger_MissingParent
+            - TestGetTrigger_NotFound
+            - TestDeleteTrigger_Success
+            - TestListTriggers_Empty
+            - TestGetProvider_ReturnsProvider
+            - TestUpdateTrigger_Success
+            - TestListTriggers_WithItems
         verification: PASS
+        notes: Removed Wave 1 stub.go (replaced by server.go). No internal/authz package exists yet; checkPermission calls iamClient.CheckPermission directly with Eventarc IAM permission strings. All 16 tests (8 server + 6 storage + 2 from Wave 1) pass. grpc.go exports NewGRPCServer and PublisherRegistrar for Wave 3/4 cmd entrypoints.
     C:
         status: complete
         commit: a04eb9d

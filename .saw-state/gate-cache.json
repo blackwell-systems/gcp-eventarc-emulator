@@ -12,6 +12,30 @@
         "cached_at": "2026-04-01T23:52:32.006967-07:00"
       }
     },
+    "13c0156a4eaf89570984ee2038d66792": {
+      "build": {
+        "gate_type": "build",
+        "command": "go build ./...",
+        "passed": true,
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": "",
+        "from_cache": true,
+        "cached_at": "2026-04-02T00:00:09.766012-07:00"
+      }
+    },
+    "1d7ec5009086662638f47421bde8ed80": {
+      "test": {
+        "gate_type": "test",
+        "command": "go test ./...",
+        "passed": true,
+        "exit_code": 0,
+        "stdout": "?   \tgithub.com/blackwell-systems/gcp-eventarc-emulator/cmd/server\t[no test files]\nok  \tgithub.com/blackwell-systems/gcp-eventarc-emulator/internal/lro\t(cached)\nok  \tgithub.com/blackwell-systems/gcp-eventarc-emulator/internal/server\t(cached)\n",
+        "stderr": "",
+        "from_cache": true,
+        "cached_at": "2026-04-02T00:05:23.624252-07:00"
+      }
+    },
     "2936ae3360730215ada1ec30cd74fd1c": {
       "lint": {
         "gate_type": "lint",
@@ -60,6 +84,30 @@
         "cached_at": "2026-04-01T22:04:19.144693-07:00"
       }
     },
+    "61b3147cbbb4a35634e99a644588b143": {
+      "lint": {
+        "gate_type": "lint",
+        "command": "go vet ./...",
+        "passed": true,
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": "",
+        "from_cache": true,
+        "cached_at": "2026-04-02T00:05:23.246606-07:00"
+      }
+    },
+    "703109ab9e51dd05d57331f9dea0f68d": {
+      "lint": {
+        "gate_type": "lint",
+        "command": "go vet ./...",
+        "passed": true,
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": "",
+        "from_cache": true,
+        "cached_at": "2026-04-02T00:00:10.164923-07:00"
+      }
+    },
     "9708b5bb6b2fc029d913892ddc7ca9f2": {
       "test": {
         "gate_type": "test",
@@ -82,6 +130,30 @@
         "stderr": "",
         "from_cache": true,
         "cached_at": "2026-04-01T23:52:32.880791-07:00"
+      }
+    },
+    "c50defe93ecdd01378cec03fb12f03e5": {
+      "build": {
+        "gate_type": "build",
+        "command": "go build ./...",
+        "passed": true,
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": "",
+        "from_cache": true,
+        "cached_at": "2026-04-02T00:05:22.836167-07:00"
+      }
+    },
+    "dd1748ba133a095abe5010524e519b95": {
+      "test": {
+        "gate_type": "test",
+        "command": "go test ./...",
+        "passed": true,
+        "exit_code": 0,
+        "stdout": "?   \tgithub.com/blackwell-systems/gcp-eventarc-emulator/cmd/server\t[no test files]\nok  \tgithub.com/blackwell-systems/gcp-eventarc-emulator/internal/lro\t(cached)\nok  \tgithub.com/blackwell-systems/gcp-eventarc-emulator/internal/server\t(cached)\n",
+        "stderr": "",
+        "from_cache": true,
+        "cached_at": "2026-04-02T00:00:10.517627-07:00"
       }
     },
     "e078b573c568f5b9c030e3e8862c4ad6": {
