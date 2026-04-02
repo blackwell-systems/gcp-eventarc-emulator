@@ -11,7 +11,6 @@ package dispatcher
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -23,9 +22,9 @@ import (
 )
 
 const (
-	cloudEventsJSONContentType = "application/cloudevents+json"
-	defaultCloudRunBaseURL     = "http://localhost"
-	defaultTimeout             = 10 * time.Second
+	binaryModeDataContentType = "application/json"
+	defaultCloudRunBaseURL    = "http://localhost"
+	defaultTimeout            = 10 * time.Second
 )
 
 // Dispatcher sends CloudEvents to trigger destinations via HTTP.
@@ -42,7 +41,9 @@ func NewDispatcher(client *http.Client) *Dispatcher {
 	return &Dispatcher{client: client}
 }
 
-// Dispatch POSTs the CloudEvent (JSON-marshaled) to the trigger's destination.
+// Dispatch POSTs the CloudEvent in binary content mode to the trigger's destination.
+// Binary content mode: event attributes are sent as Ce-* HTTP headers, and the
+// event data is sent as the request body with Content-Type from DataContentType.
 // Returns the HTTP response status code and any transport error.
 // Non-2xx responses are not errors; the caller decides how to handle them.
 func (d *Dispatcher) Dispatch(ctx context.Context, trigger *eventarcpb.Trigger, event cloudevents.Event) (int, error) {
@@ -51,16 +52,45 @@ func (d *Dispatcher) Dispatch(ctx context.Context, trigger *eventarcpb.Trigger, 
 		return 0, err
 	}
 
-	body, err := json.Marshal(event)
-	if err != nil {
-		return 0, fmt.Errorf("dispatcher: marshal event: %w", err)
+	// Binary content mode: body is the raw event data bytes.
+	body := event.DataEncoded
+	if body == nil {
+		body = []byte{}
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		return 0, fmt.Errorf("dispatcher: build request: %w", err)
 	}
-	req.Header.Set("Content-Type", cloudEventsJSONContentType)
+
+	// Set Content-Type from the event's DataContentType, defaulting to application/json.
+	ct := event.DataContentType()
+	if ct == "" {
+		ct = binaryModeDataContentType
+	}
+	req.Header.Set("Content-Type", ct)
+
+	// Required Ce-* headers.
+	req.Header.Set("Ce-Specversion", event.SpecVersion())
+	req.Header.Set("Ce-Type", event.Type())
+	req.Header.Set("Ce-Source", event.Source())
+	req.Header.Set("Ce-Id", event.ID())
+
+	// Optional Ce-* headers (only set when non-empty/non-zero).
+	if subject := event.Subject(); subject != "" {
+		req.Header.Set("Ce-Subject", subject)
+	}
+	if t := event.Time(); !t.IsZero() {
+		req.Header.Set("Ce-Time", t.UTC().Format(time.RFC3339Nano))
+	}
+	if schema := event.DataSchema(); schema != "" {
+		req.Header.Set("Ce-Dataschema", schema)
+	}
+
+	// Extension attributes: each key becomes Ce-<key>.
+	for k, v := range event.Extensions() {
+		req.Header.Set("Ce-"+k, fmt.Sprintf("%v", v))
+	}
 
 	resp, err := d.client.Do(req)
 	if err != nil {
