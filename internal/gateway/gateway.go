@@ -1,48 +1,71 @@
-// Package gateway provides HTTP/REST gateway access to the gRPC Eventarc service.
-//
-// NOTE: This is a build scaffold stub created by Wave 4 Agent C to allow
-// cmd/server-rest and cmd/server-dual to compile. The full implementation
-// is owned by Wave 4 Agent B (internal/gateway/gateway.go) and will replace
-// this stub during integration.
+// Package gateway provides HTTP/REST gateway access to the gRPC Eventarc service
+// using grpc-gateway v2 to transcode HTTP/JSON ↔ gRPC.
 package gateway
 
 import (
 	"context"
-	"fmt"
+	"net"
 	"net/http"
+
+	"github.com/grpc-ecosystem/grpc-gateway/v2/runtime"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
+
+	eventarcv1 "github.com/blackwell-systems/gcp-eventarc-emulator/internal/gen/google/cloud/eventarc/v1"
+	publishingv1 "github.com/blackwell-systems/gcp-eventarc-emulator/internal/gen/google/cloud/eventarc/publishing/v1"
 )
 
-// Gateway proxies REST/HTTP requests to a backend gRPC server.
+// Gateway transcodes HTTP/JSON requests to gRPC via grpc-gateway.
 type Gateway struct {
-	grpcAddr   string
-	httpServer *http.Server
+	mux      *runtime.ServeMux
+	httpSrv  *http.Server
+	conn     *grpc.ClientConn
 }
 
-// New creates a new Gateway that proxies REST requests to the gRPC server at grpcAddr.
+// New creates a Gateway that proxies REST requests to the gRPC server at grpcAddr.
 func New(grpcAddr string) (*Gateway, error) {
-	return &Gateway{grpcAddr: grpcAddr}, nil
+	conn, err := grpc.NewClient(grpcAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		return nil, err
+	}
+
+	mux := runtime.NewServeMux()
+	ctx := context.Background()
+
+	if err := eventarcv1.RegisterEventarcHandlerClient(ctx, mux, eventarcv1.NewEventarcClient(conn)); err != nil {
+		conn.Close()
+		return nil, err
+	}
+
+	if err := publishingv1.RegisterPublisherHandlerClient(ctx, mux, publishingv1.NewPublisherClient(conn)); err != nil {
+		conn.Close()
+		return nil, err
+	}
+
+	return &Gateway{mux: mux, conn: conn}, nil
 }
 
-// Start starts the HTTP gateway on the given address.
-// This method blocks until the server is stopped or encounters an error.
+// Start starts the HTTP gateway on the given address (non-blocking).
 func (g *Gateway) Start(httpAddr string) error {
-	mux := http.NewServeMux()
-	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprintf(w, `{"status":"healthy"}`)
-	})
-
-	g.httpServer = &http.Server{
-		Addr:    httpAddr,
-		Handler: mux,
+	ln, err := net.Listen("tcp", httpAddr)
+	if err != nil {
+		return err
 	}
-	return g.httpServer.ListenAndServe()
+	g.httpSrv = &http.Server{Handler: g.mux}
+	go g.httpSrv.Serve(ln) //nolint:errcheck
+	return nil
 }
 
-// Stop gracefully shuts down the HTTP gateway.
+// Stop gracefully shuts down the HTTP gateway and closes the gRPC connection.
 func (g *Gateway) Stop(ctx context.Context) error {
-	if g.httpServer != nil {
-		return g.httpServer.Shutdown(ctx)
+	var httpErr error
+	if g.httpSrv != nil {
+		httpErr = g.httpSrv.Shutdown(ctx)
 	}
-	return nil
+	if g.conn != nil {
+		if err := g.conn.Close(); err != nil && httpErr == nil {
+			return err
+		}
+	}
+	return httpErr
 }
