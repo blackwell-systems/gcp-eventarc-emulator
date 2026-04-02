@@ -30,16 +30,30 @@ var defaultProviders = []struct{ id, displayName string }{
 // Storage is the in-memory store for Eventarc resources.
 // All methods are thread-safe (sync.RWMutex internally).
 type Storage struct {
-	mu        sync.RWMutex
-	triggers  map[string]*eventarcpb.Trigger  // key: full resource name
-	providers map[string]*eventarcpb.Provider // key: full resource name, seeded at init
+	mu                  sync.RWMutex
+	triggers            map[string]*eventarcpb.Trigger         // key: full resource name
+	providers           map[string]*eventarcpb.Provider        // key: full resource name, seeded at init
+	channels            map[string]*eventarcpb.Channel
+	channelConnections  map[string]*eventarcpb.ChannelConnection
+	googleChannelConfigs map[string]*eventarcpb.GoogleChannelConfig
+	messageBuses        map[string]*eventarcpb.MessageBus
+	enrollments         map[string]*eventarcpb.Enrollment
+	pipelines           map[string]*eventarcpb.Pipeline
+	googleApiSources    map[string]*eventarcpb.GoogleApiSource
 }
 
 // NewStorage creates a new Storage instance seeded with default providers.
 func NewStorage() *Storage {
 	s := &Storage{
-		triggers:  make(map[string]*eventarcpb.Trigger),
-		providers: make(map[string]*eventarcpb.Provider),
+		triggers:             make(map[string]*eventarcpb.Trigger),
+		providers:            make(map[string]*eventarcpb.Provider),
+		channels:             make(map[string]*eventarcpb.Channel),
+		channelConnections:   make(map[string]*eventarcpb.ChannelConnection),
+		googleChannelConfigs: make(map[string]*eventarcpb.GoogleChannelConfig),
+		messageBuses:         make(map[string]*eventarcpb.MessageBus),
+		enrollments:          make(map[string]*eventarcpb.Enrollment),
+		pipelines:            make(map[string]*eventarcpb.Pipeline),
+		googleApiSources:     make(map[string]*eventarcpb.GoogleApiSource),
 	}
 	// Seed providers using a synthetic parent that allows wildcard matching.
 	for _, p := range defaultProviders {

@@ -302,3 +302,273 @@ func TestListTriggers_WithItems(t *testing.T) {
 		t.Errorf("expected 3 triggers, got %d", len(resp.GetTriggers()))
 	}
 }
+
+// -------------------------------------------------------------------------
+// Channel tests
+// -------------------------------------------------------------------------
+
+func TestCreateChannel_Success(t *testing.T) {
+	ctx := context.Background()
+	srv := newTestServer(t)
+
+	parent := "projects/my-project/locations/us-central1"
+	op, err := srv.CreateChannel(ctx, &eventarcpb.CreateChannelRequest{
+		Parent:    parent,
+		ChannelId: "my-channel",
+		Channel:   &eventarcpb.Channel{},
+	})
+	if err != nil {
+		t.Fatalf("CreateChannel: %v", err)
+	}
+	if !op.Done {
+		t.Errorf("expected operation to be done immediately")
+	}
+
+	ch, err := srv.GetChannel(ctx, &eventarcpb.GetChannelRequest{
+		Name: parent + "/channels/my-channel",
+	})
+	if err != nil {
+		t.Fatalf("GetChannel after create: %v", err)
+	}
+	if ch.GetName() != parent+"/channels/my-channel" {
+		t.Errorf("unexpected channel name: %s", ch.GetName())
+	}
+}
+
+func TestGetChannel_NotFound(t *testing.T) {
+	ctx := context.Background()
+	srv := newTestServer(t)
+
+	_, err := srv.GetChannel(ctx, &eventarcpb.GetChannelRequest{
+		Name: "projects/p/locations/l/channels/does-not-exist",
+	})
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	st, _ := status.FromError(err)
+	if st.Code() != codes.NotFound {
+		t.Errorf("expected NotFound, got %s", st.Code())
+	}
+}
+
+func TestListChannels_Empty(t *testing.T) {
+	ctx := context.Background()
+	srv := newTestServer(t)
+
+	resp, err := srv.ListChannels(ctx, &eventarcpb.ListChannelsRequest{
+		Parent: "projects/p/locations/l",
+	})
+	if err != nil {
+		t.Fatalf("ListChannels: %v", err)
+	}
+	if len(resp.GetChannels()) != 0 {
+		t.Errorf("expected 0 channels, got %d", len(resp.GetChannels()))
+	}
+	if resp.GetNextPageToken() != "" {
+		t.Errorf("expected empty next_page_token")
+	}
+}
+
+// -------------------------------------------------------------------------
+// ChannelConnection tests
+// -------------------------------------------------------------------------
+
+func TestCreateChannelConnection_Success(t *testing.T) {
+	ctx := context.Background()
+	srv := newTestServer(t)
+
+	parent := "projects/my-project/locations/us-central1"
+	op, err := srv.CreateChannelConnection(ctx, &eventarcpb.CreateChannelConnectionRequest{
+		Parent:              parent,
+		ChannelConnectionId: "my-conn",
+		ChannelConnection:   &eventarcpb.ChannelConnection{},
+	})
+	if err != nil {
+		t.Fatalf("CreateChannelConnection: %v", err)
+	}
+	if !op.Done {
+		t.Errorf("expected operation to be done immediately")
+	}
+}
+
+// -------------------------------------------------------------------------
+// GoogleChannelConfig tests
+// -------------------------------------------------------------------------
+
+func TestGetGoogleChannelConfig_Default(t *testing.T) {
+	ctx := context.Background()
+	srv := newTestServer(t)
+
+	cfg, err := srv.GetGoogleChannelConfig(ctx, &eventarcpb.GetGoogleChannelConfigRequest{
+		Name: "projects/p/locations/l/googleChannelConfig",
+	})
+	if err != nil {
+		t.Fatalf("GetGoogleChannelConfig: %v", err)
+	}
+	if cfg == nil {
+		t.Fatal("expected non-nil config")
+	}
+}
+
+func TestUpdateGoogleChannelConfig_Success(t *testing.T) {
+	ctx := context.Background()
+	srv := newTestServer(t)
+
+	name := "projects/p/locations/l/googleChannelConfig"
+	cfg, err := srv.UpdateGoogleChannelConfig(ctx, &eventarcpb.UpdateGoogleChannelConfigRequest{
+		GoogleChannelConfig: &eventarcpb.GoogleChannelConfig{
+			Name:          name,
+			CryptoKeyName: "projects/p/locations/l/keyRings/kr/cryptoKeys/k",
+		},
+	})
+	if err != nil {
+		t.Fatalf("UpdateGoogleChannelConfig: %v", err)
+	}
+	if cfg.GetCryptoKeyName() != "projects/p/locations/l/keyRings/kr/cryptoKeys/k" {
+		t.Errorf("expected crypto_key_name to be updated, got: %s", cfg.GetCryptoKeyName())
+	}
+}
+
+// -------------------------------------------------------------------------
+// MessageBus tests
+// -------------------------------------------------------------------------
+
+func TestCreateMessageBus_Success(t *testing.T) {
+	ctx := context.Background()
+	srv := newTestServer(t)
+
+	parent := "projects/my-project/locations/us-central1"
+	op, err := srv.CreateMessageBus(ctx, &eventarcpb.CreateMessageBusRequest{
+		Parent:       parent,
+		MessageBusId: "my-bus",
+		MessageBus:   &eventarcpb.MessageBus{},
+	})
+	if err != nil {
+		t.Fatalf("CreateMessageBus: %v", err)
+	}
+	if !op.Done {
+		t.Errorf("expected operation to be done immediately")
+	}
+
+	mb, err := srv.GetMessageBus(ctx, &eventarcpb.GetMessageBusRequest{
+		Name: parent + "/messageBuses/my-bus",
+	})
+	if err != nil {
+		t.Fatalf("GetMessageBus after create: %v", err)
+	}
+	if mb.GetName() != parent+"/messageBuses/my-bus" {
+		t.Errorf("unexpected message bus name: %s", mb.GetName())
+	}
+}
+
+func TestGetMessageBus_NotFound(t *testing.T) {
+	ctx := context.Background()
+	srv := newTestServer(t)
+
+	_, err := srv.GetMessageBus(ctx, &eventarcpb.GetMessageBusRequest{
+		Name: "projects/p/locations/l/messageBuses/does-not-exist",
+	})
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	st, _ := status.FromError(err)
+	if st.Code() != codes.NotFound {
+		t.Errorf("expected NotFound, got %s", st.Code())
+	}
+}
+
+// -------------------------------------------------------------------------
+// Enrollment tests
+// -------------------------------------------------------------------------
+
+func TestCreateEnrollment_Success(t *testing.T) {
+	ctx := context.Background()
+	srv := newTestServer(t)
+
+	parent := "projects/my-project/locations/us-central1"
+	op, err := srv.CreateEnrollment(ctx, &eventarcpb.CreateEnrollmentRequest{
+		Parent:       parent,
+		EnrollmentId: "my-enrollment",
+		Enrollment:   &eventarcpb.Enrollment{},
+	})
+	if err != nil {
+		t.Fatalf("CreateEnrollment: %v", err)
+	}
+	if !op.Done {
+		t.Errorf("expected operation to be done immediately")
+	}
+
+	en, err := srv.GetEnrollment(ctx, &eventarcpb.GetEnrollmentRequest{
+		Name: parent + "/enrollments/my-enrollment",
+	})
+	if err != nil {
+		t.Fatalf("GetEnrollment after create: %v", err)
+	}
+	if en.GetName() != parent+"/enrollments/my-enrollment" {
+		t.Errorf("unexpected enrollment name: %s", en.GetName())
+	}
+}
+
+// -------------------------------------------------------------------------
+// Pipeline tests
+// -------------------------------------------------------------------------
+
+func TestCreatePipeline_Success(t *testing.T) {
+	ctx := context.Background()
+	srv := newTestServer(t)
+
+	parent := "projects/my-project/locations/us-central1"
+	op, err := srv.CreatePipeline(ctx, &eventarcpb.CreatePipelineRequest{
+		Parent:     parent,
+		PipelineId: "my-pipeline",
+		Pipeline:   &eventarcpb.Pipeline{},
+	})
+	if err != nil {
+		t.Fatalf("CreatePipeline: %v", err)
+	}
+	if !op.Done {
+		t.Errorf("expected operation to be done immediately")
+	}
+
+	pl, err := srv.GetPipeline(ctx, &eventarcpb.GetPipelineRequest{
+		Name: parent + "/pipelines/my-pipeline",
+	})
+	if err != nil {
+		t.Fatalf("GetPipeline after create: %v", err)
+	}
+	if pl.GetName() != parent+"/pipelines/my-pipeline" {
+		t.Errorf("unexpected pipeline name: %s", pl.GetName())
+	}
+}
+
+// -------------------------------------------------------------------------
+// GoogleApiSource tests
+// -------------------------------------------------------------------------
+
+func TestCreateGoogleApiSource_Success(t *testing.T) {
+	ctx := context.Background()
+	srv := newTestServer(t)
+
+	parent := "projects/my-project/locations/us-central1"
+	op, err := srv.CreateGoogleApiSource(ctx, &eventarcpb.CreateGoogleApiSourceRequest{
+		Parent:             parent,
+		GoogleApiSourceId:  "my-source",
+		GoogleApiSource:    &eventarcpb.GoogleApiSource{},
+	})
+	if err != nil {
+		t.Fatalf("CreateGoogleApiSource: %v", err)
+	}
+	if !op.Done {
+		t.Errorf("expected operation to be done immediately")
+	}
+
+	src, err := srv.GetGoogleApiSource(ctx, &eventarcpb.GetGoogleApiSourceRequest{
+		Name: parent + "/googleApiSources/my-source",
+	})
+	if err != nil {
+		t.Fatalf("GetGoogleApiSource after create: %v", err)
+	}
+	if src.GetName() != parent+"/googleApiSources/my-source" {
+		t.Errorf("unexpected google api source name: %s", src.GetName())
+	}
+}
