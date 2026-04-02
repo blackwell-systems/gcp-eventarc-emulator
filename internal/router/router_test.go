@@ -255,3 +255,99 @@ func TestAttrValue_ExtensionAttr(t *testing.T) {
 		t.Fatalf("expected 0 matches when extension attr absent, got %d", len(got2))
 	}
 }
+
+// --- CEL condition tests ---
+
+// triggerWithCondition builds a trigger with a CEL condition stored in Labels.
+func triggerWithCondition(name, condition string) *eventarcpb.Trigger {
+	return &eventarcpb.Trigger{
+		Name:   name,
+		Labels: map[string]string{"eventarc-emulator/condition": condition},
+	}
+}
+
+func TestMatch_CEL_EmptyCondition_Matches(t *testing.T) {
+	// A trigger with no condition label should match any event (existing behaviour).
+	store := &fakeStorage{
+		triggers: []*eventarcpb.Trigger{
+			{Name: "projects/p/locations/us-central1/triggers/no-condition"},
+		},
+	}
+	r := router.NewRouter(store)
+	e := newTestEvent("google.cloud.pubsub.topic.v1.messagePublished", "//pubsub.googleapis.com/projects/p/topics/t", "")
+
+	got, err := r.Match(context.Background(), "projects/p/locations/us-central1", e)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("expected 1 match for empty condition, got %d", len(got))
+	}
+}
+
+func TestMatch_CEL_TrueCondition_Matches(t *testing.T) {
+	store := &fakeStorage{
+		triggers: []*eventarcpb.Trigger{
+			triggerWithCondition("projects/p/locations/us-central1/triggers/cel-true", `type == "google.cloud.pubsub.topic.v1.messagePublished"`),
+		},
+	}
+	r := router.NewRouter(store)
+	e := newTestEvent("google.cloud.pubsub.topic.v1.messagePublished", "//pubsub.googleapis.com/projects/p/topics/t", "")
+
+	got, err := r.Match(context.Background(), "projects/p/locations/us-central1", e)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("expected 1 match for true CEL condition, got %d", len(got))
+	}
+}
+
+func TestMatch_CEL_FalseCondition_Excludes(t *testing.T) {
+	store := &fakeStorage{
+		triggers: []*eventarcpb.Trigger{
+			triggerWithCondition("projects/p/locations/us-central1/triggers/cel-false", `type == "google.cloud.storage.object.v1.finalized"`),
+		},
+	}
+	r := router.NewRouter(store)
+	e := newTestEvent("google.cloud.pubsub.topic.v1.messagePublished", "//pubsub.googleapis.com/projects/p/topics/t", "")
+
+	got, err := r.Match(context.Background(), "projects/p/locations/us-central1", e)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("expected 0 matches for false CEL condition, got %d", len(got))
+	}
+}
+
+func TestMatch_CEL_ExpressionUsingEventAttrs(t *testing.T) {
+	// Compound expression referencing multiple event attributes.
+	cond := `type == "google.cloud.pubsub.topic.v1.messagePublished" && source == "//pubsub.googleapis.com/projects/p/topics/my-topic"`
+	store := &fakeStorage{
+		triggers: []*eventarcpb.Trigger{
+			triggerWithCondition("projects/p/locations/us-central1/triggers/cel-compound", cond),
+		},
+	}
+	r := router.NewRouter(store)
+
+	// Both attributes match — should match.
+	eMatch := newTestEvent("google.cloud.pubsub.topic.v1.messagePublished", "//pubsub.googleapis.com/projects/p/topics/my-topic", "")
+	got, err := r.Match(context.Background(), "projects/p/locations/us-central1", eMatch)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("expected 1 match for compound CEL (both attrs match), got %d", len(got))
+	}
+
+	// Source doesn't match — should be excluded.
+	eNoMatch := newTestEvent("google.cloud.pubsub.topic.v1.messagePublished", "//pubsub.googleapis.com/projects/p/topics/other", "")
+	got2, err := r.Match(context.Background(), "projects/p/locations/us-central1", eNoMatch)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got2) != 0 {
+		t.Fatalf("expected 0 matches for compound CEL (source mismatch), got %d", len(got2))
+	}
+}
