@@ -92,6 +92,12 @@ func (d *Dispatcher) Dispatch(ctx context.Context, trigger *eventarcpb.Trigger, 
 		req.Header.Set("Ce-"+k, fmt.Sprintf("%v", v))
 	}
 
+	// If EVENTARC_EMULATOR_TOKEN is set, add an Authorization: Bearer header
+	// to simulate the OIDC token that Eventarc adds for Cloud Run targets.
+	if token := os.Getenv("EVENTARC_EMULATOR_TOKEN"); token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+
 	resp, err := d.client.Do(req)
 	if err != nil {
 		return 0, fmt.Errorf("dispatcher: send request: %w", err)

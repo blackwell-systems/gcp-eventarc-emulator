@@ -200,6 +200,53 @@ func TestDispatch_ContentType_IsBinaryMode(t *testing.T) {
 	}
 }
 
+func TestDispatch_AuthorizationHeader_WhenTokenSet(t *testing.T) {
+	var gotAuth string
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	t.Setenv("EVENTARC_EMULATOR_TOKEN", "test-oidc-token")
+
+	d := NewDispatcher(nil)
+	trigger := triggerWithHTTPEndpoint(srv.URL)
+
+	_, err := d.Dispatch(context.Background(), trigger, newTestEvent())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gotAuth != "Bearer test-oidc-token" {
+		t.Errorf("expected Authorization header %q, got %q", "Bearer test-oidc-token", gotAuth)
+	}
+}
+
+func TestDispatch_AuthorizationHeader_AbsentWhenTokenUnset(t *testing.T) {
+	var gotAuth string
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	// Ensure the env var is not set.
+	t.Setenv("EVENTARC_EMULATOR_TOKEN", "")
+
+	d := NewDispatcher(nil)
+	trigger := triggerWithHTTPEndpoint(srv.URL)
+
+	_, err := d.Dispatch(context.Background(), trigger, newTestEvent())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gotAuth != "" {
+		t.Errorf("expected no Authorization header when token unset, got %q", gotAuth)
+	}
+}
+
 func TestDispatch_BinaryMode_Headers(t *testing.T) {
 	var capturedHeaders http.Header
 
