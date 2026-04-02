@@ -1342,7 +1342,7 @@ quality_gates:
 completion_reports:
     A:
         status: complete
-        branch: saw/eventarc-emulator/wave1-agent-A
+        branch: wave1-agent-A
         commit: 54cee54
         files_changed:
             - go.mod
@@ -1359,7 +1359,7 @@ completion_reports:
         notes: 'All quality gates pass (build, vet, test). go.mod uses longrunning v0.8.0 (go mod tidy bumped from v0.6.0). Created internal/server/stub.go as minimal compile stub to satisfy pre-commit gate; Wave 2 Agent B owns this package and must replace stub.go with full implementation. cmd/server/main.go wires NewServer() manually; Wave 3 Agent C updates to use server.NewGRPCServer(srv, pub). Out-of-scope dep: internal/server full implementation (Wave 2 Agent B).'
     B:
         status: complete
-        branch: saw/eventarc-emulator/wave1-agent-B
+        branch: wave1-agent-B
         commit: 9bf6470
         files_changed:
             - .gitignore
@@ -1382,7 +1382,7 @@ completion_reports:
         notes: 'Storage implementation complete. All 6 tests pass. Fixed .gitignore: bare ''server'' entry was blocking internal/server/ from being tracked; updated to scope ignores to binary output paths only. Used proto.Clone for safe proto copies (avoids copying sync.Mutex in protoimpl.MessageState). Provider seeding uses synthetic projects/-/locations/-/providers/{id} keys rewritten to caller''s parent at query time.'
     C:
         status: complete
-        branch: saw/eventarc-emulator/wave1-agent-C
+        branch: wave1-agent-C
         commit: a04eb9d
         files_changed:
             - internal/lro/store.go
