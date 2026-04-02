@@ -48,6 +48,18 @@
         "cached_at": "2026-04-02T00:14:15.680216-07:00"
       }
     },
+    "124e0cf5dae65e76347526ad67c25ca2": {
+      "lint": {
+        "gate_type": "lint",
+        "command": "go vet ./...",
+        "passed": false,
+        "exit_code": 1,
+        "stdout": "",
+        "stderr": "# github.com/blackwell-systems/gcp-eventarc-emulator/internal/server\n# [github.com/blackwell-systems/gcp-eventarc-emulator/internal/server]\nvet: internal/server/storage_channel.go:32:20: s.channels undefined (type *Storage has no field or method channels)\n# github.com/blackwell-systems/gcp-eventarc-emulator/internal/server\ninternal/server/storage_channel.go:32:20: s.channels undefined (type *Storage has no field or method channels)\ninternal/server/storage_channel.go:45:4: s.channels undefined (type *Storage has no field or method channels)\ninternal/server/storage_channel.go:55:22: s.channels undefined (type *Storage has no field or method channels)\ninternal/server/storage_channel.go:69:22: s.channels undefined (type *Storage has no field or method channels)\ninternal/server/storage_channel.go:101:20: s.channels undefined (type *Storage has no field or method channels)\ninternal/server/storage_channel.go:104:11: s.channels undefined (type *Storage has no field or method channels)\ninternal/server/storage_channel.go:115:26: s.channels undefined (type *Storage has no field or method channels)\ninternal/server/storage_channel.go:164:20: s.channelConnections undefined (type *Storage has no field or method channelConnections)\ninternal/server/storage_channel.go:177:4: s.channelConnections undefined (type *Storage has no field or method channelConnections)\ninternal/server/storage_channel.go:187:22: s.channelConnections undefined (type *Storage has no field or method channelConnections)\ninternal/server/storage_channel.go:187:22: too many errors\n",
+        "from_cache": true,
+        "cached_at": "2026-04-02T15:02:24.597039-07:00"
+      }
+    },
     "1399baeec58d688087608ec5e707137d": {
       "build": {
         "gate_type": "build",
@@ -106,6 +118,18 @@
         "stderr": "",
         "from_cache": true,
         "cached_at": "2026-04-02T00:05:23.624252-07:00"
+      }
+    },
+    "1eec75edd6fafb6b948f7c77de175f81": {
+      "build": {
+        "gate_type": "build",
+        "command": "go build ./...",
+        "passed": false,
+        "exit_code": 1,
+        "stdout": "",
+        "stderr": "# github.com/blackwell-systems/gcp-eventarc-emulator/internal/server\ninternal/server/storage_channel.go:32:20: s.channels undefined (type *Storage has no field or method channels)\ninternal/server/storage_channel.go:45:4: s.channels undefined (type *Storage has no field or method channels)\ninternal/server/storage_channel.go:55:22: s.channels undefined (type *Storage has no field or method channels)\ninternal/server/storage_channel.go:69:22: s.channels undefined (type *Storage has no field or method channels)\ninternal/server/storage_channel.go:101:20: s.channels undefined (type *Storage has no field or method channels)\ninternal/server/storage_channel.go:104:11: s.channels undefined (type *Storage has no field or method channels)\ninternal/server/storage_channel.go:115:26: s.channels undefined (type *Storage has no field or method channels)\ninternal/server/storage_channel.go:164:20: s.channelConnections undefined (type *Storage has no field or method channelConnections)\ninternal/server/storage_channel.go:177:4: s.channelConnections undefined (type *Storage has no field or method channelConnections)\ninternal/server/storage_channel.go:187:22: s.channelConnections undefined (type *Storage has no field or method channelConnections)\ninternal/server/storage_channel.go:187:22: too many errors\n",
+        "from_cache": true,
+        "cached_at": "2026-04-02T15:02:24.141448-07:00"
       }
     },
     "222159c2949d3f9018aac34544e7dd1c": {
@@ -262,6 +286,18 @@
         "stderr": "",
         "from_cache": true,
         "cached_at": "2026-04-02T00:00:10.164923-07:00"
+      }
+    },
+    "713ee314617af45c9bc4990e387e2216": {
+      "test": {
+        "gate_type": "test",
+        "command": "go test ./...",
+        "passed": false,
+        "exit_code": 1,
+        "stdout": "FAIL\tgithub.com/blackwell-systems/gcp-eventarc-emulator [build failed]\nFAIL\tgithub.com/blackwell-systems/gcp-eventarc-emulator/cmd/server [build failed]\nFAIL\tgithub.com/blackwell-systems/gcp-eventarc-emulator/cmd/server-dual [build failed]\nFAIL\tgithub.com/blackwell-systems/gcp-eventarc-emulator/cmd/server-rest [build failed]\nok  \tgithub.com/blackwell-systems/gcp-eventarc-emulator/internal/authz\t(cached)\nok  \tgithub.com/blackwell-systems/gcp-eventarc-emulator/internal/dispatcher\t(cached)\n?   \tgithub.com/blackwell-systems/gcp-eventarc-emulator/internal/gateway\t[no test files]\n?   \tgithub.com/blackwell-systems/gcp-eventarc-emulator/internal/gen/google/cloud/eventarc/publishing/v1\t[no test files]\n?   \tgithub.com/blackwell-systems/gcp-eventarc-emulator/internal/gen/google/cloud/eventarc/v1\t[no test files]\nok  \tgithub.com/blackwell-systems/gcp-eventarc-emulator/internal/lro\t(cached)\nok  \tgithub.com/blackwell-systems/gcp-eventarc-emulator/internal/publisher\t(cached)\nok  \tgithub.com/blackwell-systems/gcp-eventarc-emulator/internal/router\t(cached)\nFAIL\tgithub.com/blackwell-systems/gcp-eventarc-emulator/internal/server [build failed]\nFAIL\n",
+        "stderr": "# github.com/blackwell-systems/gcp-eventarc-emulator/internal/server\ninternal/server/storage_channel.go:32:20: s.channels undefined (type *Storage has no field or method channels)\ninternal/server/storage_channel.go:45:4: s.channels undefined (type *Storage has no field or method channels)\ninternal/server/storage_channel.go:55:22: s.channels undefined (type *Storage has no field or method channels)\ninternal/server/storage_channel.go:69:22: s.channels undefined (type *Storage has no field or method channels)\ninternal/server/storage_channel.go:101:20: s.channels undefined (type *Storage has no field or method channels)\ninternal/server/storage_channel.go:104:11: s.channels undefined (type *Storage has no field or method channels)\ninternal/server/storage_channel.go:115:26: s.channels undefined (type *Storage has no field or method channels)\ninternal/server/storage_channel.go:164:20: s.channelConnections undefined (type *Storage has no field or method channelConnections)\ninternal/server/storage_channel.go:177:4: s.channelConnections undefined (type *Storage has no field or method channelConnections)\ninternal/server/storage_channel.go:187:22: s.channelConnections undefined (type *Storage has no field or method channelConnections)\ninternal/server/storage_channel.go:187:22: too many errors\n",
+        "from_cache": true,
+        "cached_at": "2026-04-02T15:02:25.036492-07:00"
       }
     },
     "8dc1443ee28ec267d1514479a34837bf": {
