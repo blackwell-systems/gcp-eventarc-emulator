@@ -1,0 +1,1459 @@
+title: GCP Eventarc Emulator — Initial Implementation
+feature_slug: eventarc-emulator
+verdict: SUITABLE
+suitability_assessment: |
+    SUITABLE. Greenfield Go project bootstrapped from the established
+    gcp-secret-manager-emulator pattern. Decomposes into 4 waves with
+    disjoint file ownership across 12 agents.
+
+    Scope: config plane (Trigger/Provider CRUD) + immediate LRO resolution
+    + CloudEvent routing to HTTP destinations + full REST gateway via
+    grpc-gateway. Advanced resources (Channels, MessageBuses, Pipelines,
+    Enrollments) are out of scope.
+
+    REST gateway approach: Option B — keep cloud.google.com/go/eventarc/apiv1/eventarcpb
+    for gRPC server types; use buf to generate ONLY the grpc-gateway handler
+    registration code (*.pb.gw.go) against the same proto source.
+    grpc-gateway: github.com/grpc-ecosystem/grpc-gateway/v2
+
+    Wave 1 (Foundation — fully parallel, no deps):
+      - Agent A: project scaffolding (go.mod, cmd/server/main.go, Makefile + proto target)
+      - Agent B: in-memory storage (internal/server/storage.go + test)
+      - Agent C: LRO store (internal/lro/store.go + test, implements OperationsServer)
+
+    Wave 2 (Server layer — depends on Wave 1 interfaces):
+      - Agent A: IAM authz map (internal/authz/permissions.go + test)
+      - Agent B: gRPC service impl (internal/server/server.go + test)
+        Exports NewGRPCServer() helper for reuse across cmd entrypoints.
+
+    Wave 3 (Event routing — depends on Wave 2):
+      - Agent A: CloudEvent router (internal/router/router.go + test)
+      - Agent B: HTTP dispatcher (internal/dispatcher/http.go + test)
+      - Agent C: Publisher gRPC service + wire-up (internal/publisher/server.go,
+        update cmd/server/main.go via NewGRPCServer())
+      - Agent D: bufconn integration tests (integration_test.go at root)
+
+    Wave 4 (REST gateway — depends on Wave 2, parallel with Wave 3):
+      - Agent A: buf proto generation setup (buf.yaml, buf.gen.yaml, internal/gen/)
+        Generates grpc-gateway handler registration code only.
+      - Agent B: REST gateway (internal/gateway/gateway.go)
+        grpc-gateway runtime.NewServeMux() + generated RegisterEventarcHandlerFromEndpoint.
+      - Agent C: REST/dual cmd entrypoints (cmd/server-rest/main.go, cmd/server-dual/main.go)
+
+    Parallelization value: High. Wave 4 can run in parallel with Wave 3 since
+    it only depends on Wave 2 (the gRPC server interface), not on routing/publishing.
+
+    Estimated times:
+    - Wave 1: ~6 min (3 parallel agents)
+    - Wave 2: ~8 min (2 parallel agents)
+    - Wave 3+4: ~10 min (7 parallel agents across both waves simultaneously)
+    Total: ~24 min (vs ~65 min sequential)
+test_command: go test ./...
+lint_command: go vet ./...
+file_ownership:
+    - file: go.mod
+      agent: A
+      wave: 1
+      action: new
+    - file: go.sum
+      agent: A
+      wave: 1
+      action: new
+    - file: cmd/server/main.go
+      agent: A
+      wave: 1
+      action: new
+    - file: Makefile
+      agent: A
+      wave: 1
+      action: new
+    - file: .gitignore
+      agent: A
+      wave: 1
+      action: new
+    - file: internal/server/storage.go
+      agent: B
+      wave: 1
+      action: new
+    - file: internal/server/storage_test.go
+      agent: B
+      wave: 1
+      action: new
+    - file: internal/lro/store.go
+      agent: C
+      wave: 1
+      action: new
+    - file: internal/lro/store_test.go
+      agent: C
+      wave: 1
+      action: new
+    - file: internal/authz/permissions.go
+      agent: A
+      wave: 2
+      action: new
+    - file: internal/authz/permissions_test.go
+      agent: A
+      wave: 2
+      action: new
+    - file: internal/server/server.go
+      agent: B
+      wave: 2
+      action: new
+    - file: internal/server/server_test.go
+      agent: B
+      wave: 2
+      action: new
+    - file: internal/server/grpc.go
+      agent: B
+      wave: 2
+      action: new
+    - file: internal/router/router.go
+      agent: A
+      wave: 3
+      action: new
+    - file: internal/router/router_test.go
+      agent: A
+      wave: 3
+      action: new
+    - file: internal/dispatcher/http.go
+      agent: B
+      wave: 3
+      action: new
+    - file: internal/dispatcher/http_test.go
+      agent: B
+      wave: 3
+      action: new
+    - file: internal/publisher/server.go
+      agent: C
+      wave: 3
+      action: new
+    - file: internal/publisher/server_test.go
+      agent: C
+      wave: 3
+      action: new
+    - file: cmd/server/main.go
+      agent: C
+      wave: 3
+      action: modify
+    - file: integration_test.go
+      agent: D
+      wave: 3
+      action: new
+    - file: buf.yaml
+      agent: A
+      wave: 4
+      action: new
+    - file: buf.gen.yaml
+      agent: A
+      wave: 4
+      action: new
+    - file: internal/gen/google/cloud/eventarc/v1/eventarc.pb.gw.go
+      agent: A
+      wave: 4
+      action: new
+    - file: internal/gen/google/cloud/eventarc/publishing/v1/publisher.pb.gw.go
+      agent: A
+      wave: 4
+      action: new
+    - file: internal/gateway/gateway.go
+      agent: B
+      wave: 4
+      action: new
+    - file: internal/gateway/gateway_test.go
+      agent: B
+      wave: 4
+      action: new
+    - file: cmd/server-rest/main.go
+      agent: C
+      wave: 4
+      action: new
+    - file: cmd/server-dual/main.go
+      agent: C
+      wave: 4
+      action: new
+interface_contracts:
+    - name: Storage
+      description: |
+        In-memory store for Trigger and Provider resources.
+        Implemented in internal/server/storage.go (Wave 1 Agent B).
+        Consumed by internal/server/server.go (Wave 2 Agent B) and
+        internal/router/router.go (Wave 3 Agent A).
+      definition: |
+        // Storage is the in-memory store for Eventarc resources.
+        // All methods are thread-safe (sync.RWMutex internally).
+        type Storage struct { /* private */ }
+
+        func NewStorage() *Storage
+
+        // Triggers
+        func (s *Storage) CreateTrigger(ctx context.Context, parent, triggerID string, trigger *eventarcpb.Trigger) (*eventarcpb.Trigger, error)
+        func (s *Storage) GetTrigger(ctx context.Context, name string) (*eventarcpb.Trigger, error)
+        func (s *Storage) UpdateTrigger(ctx context.Context, trigger *eventarcpb.Trigger, updateMask *fieldmaskpb.FieldMask) (*eventarcpb.Trigger, error)
+        func (s *Storage) DeleteTrigger(ctx context.Context, name string) error
+        func (s *Storage) ListTriggers(ctx context.Context, parent string, pageSize int32, pageToken string, orderBy string, filter string) ([]*eventarcpb.Trigger, string, error)
+
+        // Providers (static, seeded at startup)
+        func (s *Storage) GetProvider(ctx context.Context, name string) (*eventarcpb.Provider, error)
+        func (s *Storage) ListProviders(ctx context.Context, parent string, pageSize int32, pageToken string, filter string, orderBy string) ([]*eventarcpb.Provider, string, error)
+
+        // For router: return all triggers in a location
+        func (s *Storage) ListAllTriggers(ctx context.Context, parent string) ([]*eventarcpb.Trigger, error)
+
+        // For testing
+        func (s *Storage) Clear()
+        func (s *Storage) TriggerCount() int
+      location: internal/server/storage.go
+    - name: LROStore
+      description: |
+        Long-running operation store. Resolves operations immediately (DONE)
+        for local dev ergonomics — no async polling needed.
+        Implemented in internal/lro/store.go (Wave 1 Agent C).
+        Consumed by internal/server/server.go (Wave 2 Agent B).
+
+        IMPORTANT: Store must also implement longrunningpb.OperationsServer so it
+        can be registered directly on the gRPC server alongside EventarcServer.
+        Callers using the Go client's lro.WaitOperation / GetOperation will hit
+        this service. Registration in main.go:
+          longrunningpb.RegisterOperationsServer(grpcServer, lroStore)
+      definition: |
+        // Store manages long-running operations and implements OperationsServer.
+        // In emulator mode all operations complete immediately (Done: true).
+        type Store struct {
+            longrunningpb.UnimplementedOperationsServer
+            /* private fields */
+        }
+
+        func NewStore() *Store
+
+        // CreateDone creates a pre-resolved operation with the given resource as response.
+        // name format: "projects/{project}/locations/{location}/operations/{uuid}"
+        func (s *Store) CreateDone(parent string, resource proto.Message) (*longrunningpb.Operation, error)
+
+        // OperationsServer interface (registered on gRPC server):
+        func (s *Store) GetOperation(ctx context.Context, req *longrunningpb.GetOperationRequest) (*longrunningpb.Operation, error)
+        func (s *Store) DeleteOperation(ctx context.Context, req *longrunningpb.DeleteOperationRequest) (*emptypb.Empty, error)
+        func (s *Store) CancelOperation(ctx context.Context, req *longrunningpb.CancelOperationRequest) (*emptypb.Empty, error)
+        func (s *Store) ListOperations(ctx context.Context, req *longrunningpb.ListOperationsRequest) (*longrunningpb.ListOperationsResponse, error)
+        // WaitOperation: delegates to GetOperation (already done, returns immediately)
+        func (s *Store) WaitOperation(ctx context.Context, req *longrunningpb.WaitOperationRequest) (*longrunningpb.Operation, error)
+      location: internal/lro/store.go
+    - name: NewGRPCServer
+      description: |
+        Shared gRPC server factory used by all cmd entrypoints (server, server-rest,
+        server-dual). Registers all three services and reflection. Eliminates
+        copy-paste across cmd packages.
+        Implemented in internal/server/grpc.go (Wave 2 Agent B).
+        Consumed by cmd/server/main.go (Wave 3 Agent C), cmd/server-rest/main.go
+        and cmd/server-dual/main.go (Wave 4 Agent C).
+      definition: |
+        package server
+
+        // PublisherRegistrar is the subset of publishingpb.PublisherServer needed
+        // for registration. Defined here to avoid import cycle server→publisher→server.
+        type PublisherRegistrar interface {
+            publishingpb.PublisherServer
+        }
+
+        // NewGRPCServer creates a grpc.Server with all Eventarc services registered:
+        //   - eventarcpb.EventarcServer (Trigger/Provider CRUD)
+        //   - longrunningpb.OperationsServer (LRO polling)
+        //   - publishingpb.PublisherServer (event publishing)
+        //   - grpc/reflection (for grpc_cli debugging)
+        func NewGRPCServer(srv *Server, pub PublisherRegistrar) *grpc.Server {
+            grpcSrv := grpc.NewServer()
+            eventarcpb.RegisterEventarcServer(grpcSrv, srv)
+            longrunningpb.RegisterOperationsServer(grpcSrv, srv.LROStore())
+            publishingpb.RegisterPublisherServer(grpcSrv, pub)
+            reflection.Register(grpcSrv)
+            return grpcSrv
+        }
+      location: internal/server/grpc.go
+    - name: Router
+      description: |
+        Matches an incoming CloudEvent against stored triggers.
+        Returns the list of triggers whose event_filters all match.
+        Implemented in internal/router/router.go (Wave 3 Agent A).
+        Consumed by internal/publisher/server.go (Wave 3 Agent C).
+        Uses github.com/cloudevents/sdk-go/v2 for the Event type.
+      definition: |
+        import cloudevents "github.com/cloudevents/sdk-go/v2"
+
+        // Router matches CloudEvents against Eventarc triggers.
+        type Router struct { /* private */ }
+
+        func NewRouter(storage StorageReader) *Router
+
+        // Match returns all triggers in the given project/location whose
+        // event_filters all match the provided CloudEvent.
+        // Attributes are read from event.Type(), event.Source(), event.Subject(),
+        // and event.Extensions() for custom attributes.
+        func (r *Router) Match(ctx context.Context, parent string, event cloudevents.Event) ([]*eventarcpb.Trigger, error)
+
+        // attrValue extracts a named attribute from a CloudEvent.
+        // Checks standard attributes (type, source, subject, id, datacontenttype)
+        // then falls back to Extensions().
+        func attrValue(event cloudevents.Event, attr string) string
+      location: internal/router/router.go
+    - name: Dispatcher
+      description: |
+        HTTP dispatcher — POSTs a CloudEvent to the destination URL extracted
+        from a trigger's http_endpoint or cloud_run destination.
+        Implemented in internal/dispatcher/http.go (Wave 3 Agent B).
+        Consumed by internal/publisher/server.go (Wave 3 Agent C).
+        Uses github.com/cloudevents/sdk-go/v2 for marshaling.
+      definition: |
+        import cloudevents "github.com/cloudevents/sdk-go/v2"
+
+        // Dispatcher sends CloudEvents to trigger destinations via HTTP.
+        type Dispatcher struct { /* private */ }
+
+        func NewDispatcher(httpClient *http.Client) *Dispatcher
+
+        // Dispatch POSTs the CloudEvent (JSON-marshaled via sdk-go) to the
+        // trigger's destination URL with Content-Type: application/cloudevents+json.
+        // Returns the HTTP response status and any transport error.
+        // trigger.Destination must have HttpEndpoint.Uri set; Cloud Run destinations
+        // are supported by mapping service URL from the trigger's cloud_run.service field
+        // using EVENTARC_CLOUDRUN_BASE_URL env var (default: http://localhost).
+        func (d *Dispatcher) Dispatch(ctx context.Context, trigger *eventarcpb.Trigger, event cloudevents.Event) (int, error)
+      location: internal/dispatcher/http.go
+waves:
+    - number: 1
+      agents:
+        - id: A
+          task: |
+            ## Wave 1 Agent A — Project Scaffolding
+
+            Bootstrap the Go module and server entrypoint. Follow the exact
+            patterns from gcp-secret-manager-emulator.
+
+            ### Files to create
+
+            **go.mod**
+            ```
+            module github.com/blackwell-systems/gcp-eventarc-emulator
+
+            go 1.24.0
+
+            require (
+                cloud.google.com/go/eventarc v1.18.0
+                github.com/blackwell-systems/gcp-emulator-auth v0.3.0
+                github.com/cloudevents/sdk-go/v2 v2.15.2
+                cloud.google.com/go/longrunning v0.6.0
+                google.golang.org/grpc v1.78.0
+                google.golang.org/protobuf v1.36.11
+            )
+            ```
+            Run `go mod tidy` to populate go.sum and indirect deps.
+
+            **cmd/server/main.go**
+            Mirror gcp-secret-manager-emulator/cmd/server/main.go exactly:
+            - Package doc with Usage + Environment Variables
+            - `--port` flag, default 9085 (Eventarc port convention)
+            - Env vars: `EVENTARC_EMULATOR_HOST` (port part), `GCP_MOCK_LOG_LEVEL`
+            - Create gRPC server, register EventarcServer + OperationsServer, register reflection
+            - Graceful shutdown on SIGINT/SIGTERM
+            - Log: "GCP Eventarc Emulator v{version}"
+            - Do NOT add HTTP intake listener yet — Wave 3 Agent C will add it.
+            - Use server.NewGRPCServer() to register all services — do NOT inline
+              service registration. Wave 3 Agent C adds the publisher and calls
+              NewGRPCServer; Wave 1 Agent A creates a stub that will compile once
+              Wave 2 is complete. For Wave 1, just create the server struct:
+              ```go
+              srv, err := server.NewServer()
+              // NewGRPCServer wired by Wave 3 Agent C once publisher exists
+              grpcServer := grpc.NewServer()
+              eventarcpb.RegisterEventarcServer(grpcServer, srv)
+              reflection.Register(grpcServer)
+              ```
+              Wave 3 Agent C will update this to use server.NewGRPCServer(srv, pub).
+            - `server.NewServer()` comes from `github.com/blackwell-systems/gcp-eventarc-emulator/internal/server`
+
+            **Makefile**
+            ```makefile
+            .PHONY: build test lint clean
+
+            build:
+                go build ./...
+
+            test:
+                go test ./...
+
+            lint:
+                go vet ./...
+
+            clean:
+                rm -f gcp-eventarc-emulator
+            ```
+
+            **.gitignore**
+            ```
+            gcp-eventarc-emulator
+            *.test
+            .env
+            ```
+
+            ### Verification gate
+            ```bash
+            go mod tidy
+            go build ./...
+            go vet ./...
+            ```
+            Note: `go build ./...` may fail if Wave 1 B/C packages are not yet
+            present. That is expected — the entrypoint imports them. Verify at
+            minimum that go.mod is valid and the cmd/server package compiles
+            in isolation (comment out internal imports temporarily if needed,
+            or just verify go.mod + go.sum are correct and go vet passes on
+            cmd/server/main.go once sibling agents complete).
+
+            ### Constraints
+            - Use port 9085 as default (matches EVENTARC_EMULATOR_HOST convention).
+            - Keep env var pattern consistent: `EVENTARC_EMULATOR_HOST` contains
+              "host:port" (e.g. "localhost:9085") matching the real GCP emulator
+              env var name used by the Go client.
+            - Do NOT implement server logic here — just wire up the registered server.
+          files:
+            - go.mod
+            - go.sum
+            - cmd/server/main.go
+            - Makefile
+            - .gitignore
+        - id: B
+          task: |
+            ## Wave 1 Agent B — In-Memory Storage
+
+            Implement the in-memory storage layer for Trigger and Provider
+            resources. Follow the exact pattern from
+            gcp-secret-manager-emulator/internal/server/storage.go.
+
+            ### Storage struct
+            ```go
+            package server
+
+            type Storage struct {
+                mu        sync.RWMutex
+                triggers  map[string]*eventarcpb.Trigger  // key: full resource name
+                providers map[string]*eventarcpb.Provider // key: full resource name, seeded at init
+            }
+            ```
+
+            ### Methods to implement
+            See interface contract `Storage` in the IMPL doc for full signatures.
+
+            **Triggers:**
+            - `CreateTrigger` — validate name uniqueness, set create_time/update_time,
+              generate uid (use `fmt.Sprintf("%x", rand.Uint64())`), return AlreadyExists
+              if duplicate.
+            - `GetTrigger` — return NotFound if missing.
+            - `UpdateTrigger` — apply update_mask fields (labels, destination, event_filters,
+              service_account, channel). Set update_time. Return NotFound if missing.
+            - `DeleteTrigger` — return NotFound if missing.
+            - `ListTriggers` — filter by parent prefix, sort by name, paginate with
+              integer offset token (same pattern as secret manager). Support orderBy
+              "name" and "create_time desc". Filter param: parse simple "trigger_id=X"
+              style; if unparseable, ignore.
+            - `ListAllTriggers` — return all triggers under parent, no pagination
+              (used by router).
+
+            **Providers (static seed):**
+            Seed a small set of well-known providers at `NewStorage()` time:
+            ```go
+            var defaultProviders = []struct{ name, displayName string }{
+                {"pubsub.googleapis.com", "Cloud Pub/Sub"},
+                {"storage.googleapis.com", "Cloud Storage"},
+                {"run.googleapis.com", "Cloud Run"},
+                {"cloudfunctions.googleapis.com", "Cloud Functions"},
+                {"cloudscheduler.googleapis.com", "Cloud Scheduler"},
+            }
+            ```
+            Provider resource name pattern:
+            `projects/{project}/locations/{location}/providers/{provider-id}`
+            Seed with a synthetic project "projects/-/locations/-/providers/{id}"
+            and match by provider ID suffix when GetProvider/ListProviders is called.
+            (Simpler alternative: on first GetProvider/ListProviders call, create
+            provider entries for the requested parent on the fly.)
+
+            ### Tests (storage_test.go)
+            - TestCreateTrigger_Success
+            - TestCreateTrigger_AlreadyExists
+            - TestGetTrigger_NotFound
+            - TestDeleteTrigger_NotFound
+            - TestListTriggers_Pagination
+            - TestListProviders_ReturnsDefaults
+
+            ### Verification gate
+            ```bash
+            go build ./internal/server/...
+            go vet ./internal/server/...
+            go test ./internal/server/... -run TestStorage -v
+            ```
+
+            ### Constraints
+            - Import eventarcpb from `cloud.google.com/go/eventarc/apiv1/eventarcpb`.
+            - Use `google.golang.org/protobuf/types/known/timestamppb` for timestamps.
+            - Use `google.golang.org/protobuf/types/known/fieldmaskpb` for update masks.
+            - Do NOT implement server.go here — only storage.
+            - Provider seeding strategy: on-demand per parent is fine for MVP.
+          files:
+            - internal/server/storage.go
+            - internal/server/storage_test.go
+        - id: C
+          task: |
+            ## Wave 1 Agent C — LRO Store
+
+            Implement the long-running operation store. In this emulator all
+            operations resolve immediately (DONE state) — no async polling.
+
+            ### LRO store
+            ```go
+            package lro
+
+            import (
+                longrunningpb "cloud.google.com/go/longrunning/autogen/longrunningpb"
+                // verify path after go mod tidy; alt: cloud.google.com/go/longrunning/autogen/longrunningpb
+                "google.golang.org/protobuf/types/known/anypb"
+                "google.golang.org/protobuf/types/known/emptypb"
+            )
+
+            // Store manages long-running operations AND implements OperationsServer
+            // so it can be registered directly on the gRPC server.
+            // Callers using the Go LRO client (lro.WaitOperation, GetOperation) will
+            // call this service endpoint.
+            type Store struct {
+                longrunningpb.UnimplementedOperationsServer
+                mu  sync.RWMutex
+                ops map[string]*longrunningpb.Operation // key: operation name
+            }
+            ```
+
+            ### Methods to implement
+            See interface contract `LROStore` in the IMPL doc for full signatures.
+
+            **CreateDone (internal helper, not gRPC):**
+            1. Generate operation name:
+               `{parent}/operations/{uuid}` where uuid = random hex string
+            2. Pack `resource` into `anypb.Any`
+            3. Build `&longrunningpb.Operation{Name: name, Done: true,
+               Result: &longrunningpb.Operation_Response{Response: anyVal}}`
+            4. Store in map and return.
+
+            **OperationsServer interface (gRPC-registered methods):**
+            - `GetOperation(ctx, *GetOperationRequest) (*Operation, error)`
+              → look up by req.Name, return NotFound if missing
+            - `DeleteOperation(ctx, *DeleteOperationRequest) (*emptypb.Empty, error)`
+              → remove from map, NotFound if missing
+            - `CancelOperation(ctx, *CancelOperationRequest) (*emptypb.Empty, error)`
+              → no-op (already done), return nil
+            - `ListOperations(ctx, *ListOperationsRequest) (*ListOperationsResponse, error)`
+              → filter ops by req.Name prefix, return paginated list
+            - `WaitOperation(ctx, *WaitOperationRequest) (*Operation, error)`
+              → delegate to GetOperation (already done, returns immediately)
+
+            ### Package import path
+            After `go mod tidy`, verify the longrunning package path.
+            Try `cloud.google.com/go/longrunning/autogen/longrunningpb` first.
+            If the type is `longrunning.Operation` (no pb suffix), alias:
+            `longrunningpb "cloud.google.com/go/longrunning/autogen/longrunningpb"`
+            Document the resolved path in a comment at the top of store.go.
+
+            ### Tests (store_test.go)
+            - TestCreateDone_ReturnsImmediatelyDone
+            - TestCreateDone_ResponseUnpackable
+            - TestGetOperation_NotFound
+            - TestDeleteOperation_NotFound
+            - TestCancelOperation_NoOp
+            - TestWaitOperation_ReturnsImmediately
+            - TestListOperations_FiltersByPrefix
+
+            ### Verification gate
+            ```bash
+            go build ./internal/lro/...
+            go vet ./internal/lro/...
+            go test ./internal/lro/... -v
+            ```
+
+            ### Constraints
+            - Operations MUST have Done: true immediately.
+            - Operation name must embed the parent resource path for traceability.
+            - Do NOT implement async background goroutines.
+          files:
+            - internal/lro/store.go
+            - internal/lro/store_test.go
+    - number: 2
+      agents:
+        - id: A
+          task: |
+            ## Wave 2 Agent A — IAM Authorization Map
+
+            Implement the permission map for Eventarc operations, following
+            gcp-secret-manager-emulator/internal/authz/permissions.go exactly.
+
+            ### permissions.go
+            ```go
+            package authz
+
+            // PermissionCheck maps an RPC name to its GCP IAM permission string.
+            type PermissionCheck struct {
+                Permission string
+            }
+
+            var permissionMap = map[string]PermissionCheck{
+                "GetTrigger":    {Permission: "eventarc.triggers.get"},
+                "ListTriggers":  {Permission: "eventarc.triggers.list"},
+                "CreateTrigger": {Permission: "eventarc.triggers.create"},
+                "UpdateTrigger": {Permission: "eventarc.triggers.update"},
+                "DeleteTrigger": {Permission: "eventarc.triggers.delete"},
+                "GetProvider":   {Permission: "eventarc.providers.get"},
+                "ListProviders": {Permission: "eventarc.providers.list"},
+            }
+
+            func GetPermission(operation string) (PermissionCheck, bool) { ... }
+
+            // NormalizeParentForCreate strips trailing slashes, returns parent as-is.
+            func NormalizeParentForCreate(parent string) string { ... }
+
+            // NormalizeTriggerResource returns the trigger resource name for IAM checks.
+            func NormalizeTriggerResource(name string) string { ... }
+            ```
+
+            ### Tests (permissions_test.go)
+            - TestGetPermission_KnownOperation
+            - TestGetPermission_UnknownOperation
+            - TestNormalizeTriggerResource
+
+            ### Verification gate
+            ```bash
+            go build ./internal/authz/...
+            go vet ./internal/authz/...
+            go test ./internal/authz/... -v
+            ```
+          files:
+            - internal/authz/permissions.go
+            - internal/authz/permissions_test.go
+        - id: B
+          task: |
+            ## Wave 2 Agent B — gRPC Service Implementation
+
+            Implement the Eventarc gRPC service. Mirror server.go from
+            gcp-secret-manager-emulator/internal/server/server.go exactly
+            in structure.
+
+            ### Server struct
+            ```go
+            package server
+
+            type Server struct {
+                eventarcpb.UnimplementedEventarcServer
+                storage   *Storage
+                lro       *lro.Store
+                iamClient *emulatorauth.Client
+                iamMode   emulatorauth.AuthMode
+            }
+
+            func NewServer() (*Server, error) { ... } // same pattern as secret manager
+            ```
+
+            ### RPCs to implement
+
+            **Triggers (all return LRO for Create/Update/Delete):**
+            - `GetTrigger(ctx, *GetTriggerRequest) (*Trigger, error)`
+            - `ListTriggers(ctx, *ListTriggersRequest) (*ListTriggersResponse, error)`
+            - `CreateTrigger(ctx, *CreateTriggerRequest) (*longrunningpb.Operation, error)`
+              → validate parent + trigger_id + trigger not nil, checkPermission,
+                storage.CreateTrigger, lro.CreateDone(parent, trigger)
+            - `UpdateTrigger(ctx, *UpdateTriggerRequest) (*longrunningpb.Operation, error)`
+              → validate trigger.name + update_mask, checkPermission,
+                storage.UpdateTrigger, lro.CreateDone(parent, trigger)
+            - `DeleteTrigger(ctx, *DeleteTriggerRequest) (*longrunningpb.Operation, error)`
+              → validate name, checkPermission,
+                storage.DeleteTrigger, lro.CreateDone(parent, &emptypb.Empty{})
+
+            **Providers (read-only, no LRO):**
+            - `GetProvider(ctx, *GetProviderRequest) (*Provider, error)`
+            - `ListProviders(ctx, *ListProvidersRequest) (*ListProvidersResponse, error)`
+
+            **checkPermission:** identical to secret manager pattern — if iamClient
+            is nil (IAM disabled), allow all. Otherwise call iamClient.CheckPermission.
+
+            ### Tests (server_test.go)
+            - TestCreateTrigger_Success — create trigger, verify LRO is done
+            - TestCreateTrigger_MissingParent — verify InvalidArgument
+            - TestGetTrigger_NotFound — verify NotFound
+            - TestDeleteTrigger_Success — create then delete
+            - TestListTriggers_Empty — empty list response
+            - TestGetProvider_ReturnsProvider — verify provider returned
+
+            Use table-driven tests where possible. No IAM setup needed for basic
+            tests (iamClient nil = allow all).
+
+            ### Verification gate
+            ```bash
+            go build ./internal/server/...
+            go vet ./internal/server/...
+            go test ./internal/server/... -v
+            ```
+
+            ### Constraints
+            - Import lro from `github.com/blackwell-systems/gcp-eventarc-emulator/internal/lro`
+            - Import authz from `github.com/blackwell-systems/gcp-eventarc-emulator/internal/authz`
+            - LRO operations must use lro.Store.CreateDone — never resolve inline.
+            - The Server must export Storage() for testing (same as secret manager).
+            - The Server must export LROStore() *lro.Store so main.go can register
+              the OperationsServer: longrunningpb.RegisterOperationsServer(grpcSrv, srv.LROStore())
+            - Create internal/server/grpc.go with NewGRPCServer() and PublisherRegistrar
+              (see interface contract NewGRPCServer). This is the single registration
+              point used by ALL cmd entrypoints — cmd/server, cmd/server-rest, cmd/server-dual.
+            - Do NOT implement Channels, MessageBuses, or other resources.
+          files:
+            - internal/server/server.go
+            - internal/server/server_test.go
+            - internal/server/grpc.go
+    - number: 3
+      agents:
+        - id: A
+          task: |
+            ## Wave 3 Agent A — CloudEvent Router
+
+            Match incoming CloudEvents against stored Eventarc triggers using
+            the trigger's event_filters.
+
+            ### Router
+            ```go
+            package router
+
+            import cloudevents "github.com/cloudevents/sdk-go/v2"
+
+            type Router struct {
+                storage StorageReader
+            }
+
+            // StorageReader is the subset of *server.Storage needed by the router.
+            // Define as interface to avoid circular imports.
+            type StorageReader interface {
+                ListAllTriggers(ctx context.Context, parent string) ([]*eventarcpb.Trigger, error)
+            }
+
+            func NewRouter(storage StorageReader) *Router
+
+            func (r *Router) Match(ctx context.Context, parent string, event cloudevents.Event) ([]*eventarcpb.Trigger, error)
+
+            // attrValue extracts a named CloudEvents attribute from the event.
+            // Checks: "type", "source", "subject", "id", "datacontenttype" as standard attrs.
+            // Falls back to event.Extensions()[attr] for custom attributes.
+            func attrValue(event cloudevents.Event, attr string) string
+            ```
+
+            ### Matching logic
+            Eventarc event_filters is a list of `EventFilter{Attribute, Value, Operator}`.
+            A trigger matches if ALL filters match the event attributes.
+
+            Operators:
+            - `""` (empty) or `"match-path-pattern"` — exact string match for now
+              (path pattern syntax is complex; exact match covers 90% of real use).
+            - Future: `"match-path-pattern"` can be upgraded to glob/prefix matching.
+
+            Algorithm:
+            ```
+            for each trigger in ListAllTriggers(parent):
+                matched = true
+                for each filter in trigger.EventFilters:
+                    eventVal = attrValue(event, filter.Attribute)
+                    if eventVal != filter.Value:
+                        matched = false; break
+                if matched: append to results
+            ```
+
+            ### Tests (router_test.go)
+            Build test CloudEvents using the SDK:
+            ```go
+            e := cloudevents.NewEvent()
+            e.SetType("google.cloud.pubsub.topic.v1.messagePublished")
+            e.SetSource("//pubsub.googleapis.com/projects/p/topics/t")
+            ```
+            - TestMatch_ExactFilter_Matches
+            - TestMatch_ExactFilter_NoMatch
+            - TestMatch_MultipleFilters_AllMustMatch
+            - TestMatch_EmptyTriggers_ReturnsEmpty
+            - TestMatch_NoFilters_MatchesAll (trigger with no filters matches any event)
+            - TestAttrValue_StandardAttrs
+            - TestAttrValue_ExtensionAttr
+
+            ### Verification gate
+            ```bash
+            go build ./internal/router/...
+            go vet ./internal/router/...
+            go test ./internal/router/... -v
+            ```
+
+            ### Constraints
+            - Use a StorageReader interface (not *server.Storage directly) to avoid
+              circular import between router and server packages.
+            - Matching must be case-sensitive (CloudEvents attributes are case-sensitive).
+            - A trigger with zero event_filters matches all events.
+            - Import: `cloudevents "github.com/cloudevents/sdk-go/v2"`
+          files:
+            - internal/router/router.go
+            - internal/router/router_test.go
+        - id: B
+          task: |
+            ## Wave 3 Agent B — HTTP Dispatcher
+
+            HTTP POST a CloudEvent (as JSON) to a trigger's destination URL.
+
+            ### Dispatcher
+            ```go
+            package dispatcher
+
+            import cloudevents "github.com/cloudevents/sdk-go/v2"
+
+            type Dispatcher struct {
+                client *http.Client
+            }
+
+            func NewDispatcher(client *http.Client) *Dispatcher
+            // If client is nil, use http.DefaultClient with 10s timeout.
+
+            func (d *Dispatcher) Dispatch(ctx context.Context, trigger *eventarcpb.Trigger, event cloudevents.Event) (int, error)
+            ```
+
+            ### Dispatch logic
+            1. Extract destination URL from trigger:
+               - If `trigger.Destination.GetHttpEndpoint() != nil`:
+                 use `trigger.Destination.GetHttpEndpoint().GetUri()`
+               - If `trigger.Destination.GetCloudRun() != nil`:
+                 construct URL as `{EVENTARC_CLOUDRUN_BASE_URL}/{path}` where
+                 EVENTARC_CLOUDRUN_BASE_URL defaults to `http://localhost` and
+                 path comes from `trigger.Destination.GetCloudRun().GetPath()`
+                 (default path: "/")
+               - Otherwise: return error "unsupported destination type"
+            2. Marshal event to JSON: `body, err := json.Marshal(event)`
+            3. POST body to URL with `Content-Type: application/cloudevents+json`.
+            4. Return HTTP status code and any transport error.
+            5. Log: "dispatching event to {url}, status: {code}"
+
+            ### Tests (http_test.go)
+            Use `httptest.NewServer` to capture dispatch calls.
+            Build test events with the SDK:
+            ```go
+            e := cloudevents.NewEvent()
+            e.SetType("google.cloud.pubsub.topic.v1.messagePublished")
+            e.SetSource("//pubsub.googleapis.com/projects/p/topics/t")
+            e.SetID("test-id")
+            ```
+            - TestDispatch_HttpEndpoint_Success — verify POST reaches test server with correct body
+            - TestDispatch_HttpEndpoint_Returns404 — non-2xx is not an error (just returned)
+            - TestDispatch_CloudRunDestination_UsesBaseURL
+            - TestDispatch_UnsupportedDestination_ReturnsError
+            - TestDispatch_ContentType_IsCloudEventsJSON
+
+            ### Verification gate
+            ```bash
+            go build ./internal/dispatcher/...
+            go vet ./internal/dispatcher/...
+            go test ./internal/dispatcher/... -v
+            ```
+
+            ### Constraints
+            - Non-2xx HTTP responses from destination are NOT dispatcher errors —
+              return the status code, let the caller decide.
+            - EVENTARC_CLOUDRUN_BASE_URL env var for Cloud Run URL mapping.
+            - Do NOT implement retries (that is a future concern).
+            - Timeout: use 10s default on http.Client if nil is passed.
+          files:
+            - internal/dispatcher/http.go
+            - internal/dispatcher/http_test.go
+        - id: C
+          task: |
+            ## Wave 3 Agent C — Publisher gRPC Service + Wire-Up
+
+            Implement the Eventarc Publishing API as a gRPC service and wire up
+            the full server. The Publishing API is a separate gRPC service
+            (google.cloud.eventarc.publishing.v1.Publisher) that clients use to
+            publish events programmatically.
+
+            Reference: https://cloud.google.com/eventarc/docs/reference/publishing/rpc
+            Package: google.cloud.eventarc.publishing.v1
+            Go client: cloud.google.com/go/eventarc/publishing/apiv1
+
+            ### internal/publisher/server.go
+            ```go
+            package publisher
+
+            // Server implements google.cloud.eventarc.publishing.v1.PublisherServer.
+            type Server struct {
+                publishingpb.UnimplementedPublisherServer
+                router     RouterMatcher
+                dispatcher EventDispatcher
+            }
+
+            // RouterMatcher is the interface subset needed by publisher.
+            type RouterMatcher interface {
+                Match(ctx context.Context, parent string, event cloudevents.Event) ([]*eventarcpb.Trigger, error)
+            }
+
+            // EventDispatcher is the interface subset needed by publisher.
+            type EventDispatcher interface {
+                Dispatch(ctx context.Context, trigger *eventarcpb.Trigger, event cloudevents.Event) (int, error)
+            }
+
+            func NewServer(router RouterMatcher, dispatcher EventDispatcher) *Server
+            ```
+
+            ### RPCs to implement
+
+            **PublishEvents** (primary — fires triggers):
+            ```
+            PublishEvents(ctx, *PublishEventsRequest) (*PublishEventsResponse, error)
+            ```
+            Request fields: `channel` (resource name), `events` (repeated google.protobuf.Any).
+            Processing:
+            1. Extract parent from channel name (e.g. `projects/p/locations/l/channels/c` → `projects/p/locations/l`).
+            2. For each event in req.Events: unpack to CloudEvent, extract type/source/subject attrs.
+            3. Call router.Match(ctx, parent, attrs) to find matching triggers.
+            4. For each matching trigger, call dispatcher.Dispatch(ctx, trigger, eventJSON, contentType).
+            5. Return &PublishEventsResponse{} (empty on success).
+
+            **PublishChannelConnectionEvents** (partner use case — minimal impl):
+            ```
+            PublishChannelConnectionEvents(ctx, *PublishChannelConnectionEventsRequest) (*PublishChannelConnectionEventsResponse, error)
+            ```
+            Same flow as PublishEvents but parent derived from channel_connection resource name.
+            Minimal implementation: extract parent, match triggers, dispatch.
+
+            NOTE: PublisherServer has exactly two methods: PublishEvents and
+            PublishChannelConnectionEvents. There is no Publish method — do not
+            implement one. Embed publishingpb.UnimplementedPublisherServer for
+            forward compatibility.
+
+            ### CloudEvent unpacking
+            Events in PublishEventsRequest are `repeated google.protobuf.Any`.
+            Strategy: marshal the Any to JSON via `protojson.Marshal`, then unmarshal
+            into a `cloudevents.Event` using the sdk-go JSON unmarshaler:
+            ```go
+            import cloudevents "github.com/cloudevents/sdk-go/v2"
+
+            var e cloudevents.Event
+            rawJSON, _ := protojson.Marshal(anyVal)
+            json.Unmarshal(rawJSON, &e)
+            ```
+            Then pass `e` to router.Match and dispatcher.Dispatch.
+            If unmarshaling fails, log a warning and skip that event (don't fail the RPC).
+
+            ### Update cmd/server/main.go
+            Wave 1 Agent A created cmd/server/main.go with a temporary inline registration.
+            Replace it to use server.NewGRPCServer() — the single registration point:
+            ```go
+            rtr := router.NewRouter(srv.Storage())
+            dsp := dispatcher.NewDispatcher(nil)
+            pub := publisher.NewServer(rtr, dsp)
+            grpcServer := server.NewGRPCServer(srv, pub)
+            ```
+            Remove the old inline eventarcpb.RegisterEventarcServer / reflection.Register calls.
+            Log: "Publisher service registered"
+            No second port needed — all services share the same gRPC server.
+
+            Also add a convenience HTTP endpoint for testing (lightweight, not the main path):
+            - `POST /events` on a second port (env `EVENTARC_EVENTS_PORT`, default 8085)
+            - Accepts CloudEvent JSON body, extracts attrs, calls router.Match + dispatcher.Dispatch
+            - This is for curl-based testing; real clients use the gRPC Publisher service
+
+            ### Tests (server_test.go)
+            - TestPublishEvents_MatchingTrigger_Dispatches
+            - TestPublishEvents_NoMatchingTriggers_ReturnsEmpty
+            - TestPublishChannelConnectionEvents_Dispatches
+
+            Use mock RouterMatcher and EventDispatcher.
+
+            ### Verification gate
+            ```bash
+            go build ./internal/publisher/...
+            go build ./cmd/server/...
+            go vet ./internal/publisher/... ./cmd/server/...
+            go test ./internal/publisher/... -v
+            go test ./... 2>&1 | tail -5
+            ```
+
+            ### Constraints
+            - Use interface types (RouterMatcher, EventDispatcher) to avoid import cycles.
+            - Publishing proto package path: verify after `go get cloud.google.com/go/eventarc/publishing/apiv1`.
+              Expected: `cloud.google.com/go/eventarc/publishing/apiv1/publishingpb`
+            - If publishingpb is not available as a separate module, fall back to implementing
+              only the HTTP convenience endpoint and note the gap.
+            - Dispatch errors per trigger are logged but do not fail PublishEvents.
+          files:
+            - internal/publisher/server.go
+            - internal/publisher/server_test.go
+            - cmd/server/main.go
+        - id: D
+          task: |
+            ## Wave 3 Agent D — Root-Level Integration Tests (bufconn)
+
+            Write end-to-end integration tests at the repo root using
+            google.golang.org/grpc/test/bufconn. Follow the pattern from
+            gcp-secret-manager-emulator/integration_test.go exactly.
+
+            ### Test file: integration_test.go (package main_test or package integration)
+
+            **Setup helpers:**
+            ```go
+            func setupTestServer(t *testing.T) (*grpc.Server, *bufconn.Listener, func()) {
+                lis := bufconn.Listen(1024 * 1024)
+                srv, err := server.NewServer()
+                require.NoError(t, err)
+                grpcSrv := grpc.NewServer()
+                eventarcpb.RegisterEventarcServer(grpcSrv, srv)
+                go grpcSrv.Serve(lis)
+                return grpcSrv, lis, func() { grpcSrv.Stop(); lis.Close() }
+            }
+
+            func setupTestClient(t *testing.T, lis *bufconn.Listener) (eventarcpb.EventarcClient, *grpc.ClientConn, func()) {
+                conn, err := grpc.NewClient("passthrough://bufnet",
+                    grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) {
+                        return lis.DialContext(ctx)
+                    }),
+                    grpc.WithTransportCredentials(insecure.NewCredentials()),
+                )
+                require.NoError(t, err)
+                return eventarcpb.NewEventarcClient(conn), conn, func() { conn.Close() }
+            }
+            ```
+
+            **Test cases:**
+            - `TestIntegration_TriggerCRUD` — subtests:
+              - Create: CreateTrigger returns a DONE operation containing the trigger
+              - Get: GetTrigger returns the created trigger
+              - List: ListTriggers returns the trigger
+              - Update: UpdateTrigger (change labels) returns DONE operation
+              - Delete: DeleteTrigger returns DONE operation
+              - GetAfterDelete: GetTrigger returns NotFound
+            - `TestIntegration_ListProviders` — ListProviders returns at least one provider
+            - `TestIntegration_GetProvider` — GetProvider for a known provider ID succeeds
+            - `TestIntegration_CreateTrigger_MissingParent` — returns InvalidArgument
+            - `TestIntegration_CreateTrigger_Duplicate` — returns AlreadyExists
+
+            **Minimal trigger for tests:**
+            ```go
+            func testTrigger() *eventarcpb.Trigger {
+                return &eventarcpb.Trigger{
+                    EventFilters: []*eventarcpb.EventFilter{
+                        {Attribute: "type", Value: "google.cloud.pubsub.topic.v1.messagePublished"},
+                    },
+                    Destination: &eventarcpb.Destination{
+                        Descriptor_: &eventarcpb.Destination_HttpEndpoint{
+                            HttpEndpoint: &eventarcpb.HttpEndpoint{Uri: "http://localhost:8080/handler"},
+                        },
+                    },
+                }
+            }
+            ```
+
+            **LRO unwrapping helper:**
+            CreateTrigger/UpdateTrigger/DeleteTrigger return
+            `*longrunningpb.Operation`. Since operations are immediately DONE,
+            unpack the response:
+            ```go
+            func unpackTrigger(t *testing.T, op *longrunningpb.Operation) *eventarcpb.Trigger {
+                require.True(t, op.Done)
+                var trigger eventarcpb.Trigger
+                require.NoError(t, op.GetResponse().UnmarshalTo(&trigger))
+                return &trigger
+            }
+            ```
+
+            ### Additional dependency
+            Add to go.mod (via go get):
+            `google.golang.org/grpc/test/bufconn` — already part of
+            `google.golang.org/grpc` module, no separate require needed.
+            Add `golang.org/x/net` if not already present (bufconn may need it).
+
+            ### Verification gate
+            ```bash
+            go build ./...
+            go vet ./...
+            go test -v -run TestIntegration ./...
+            ```
+
+            ### Constraints
+            - Use `t.Helper()` in setup helpers.
+            - Tests must pass with IAM disabled (default) — no emulatorauth setup needed.
+            - Do NOT start an HTTP server in integration tests — gRPC only.
+            - Each top-level test must be independent (fresh server per test via t.Cleanup).
+            - Wave 3 Agents A/B/C must complete before this agent runs, as the
+              full server.NewServer() wires up storage + lro + router + dispatcher.
+              If running truly in parallel, stub out only what compiles.
+          files:
+            - integration_test.go
+    - number: 4
+      agents:
+        - id: A
+          task: |
+            ## Wave 4 Agent A — buf Proto Generation Setup
+
+            Set up buf to generate ONLY grpc-gateway handler registration code
+            from the official Eventarc protos (Option B: keep cloud.google.com/go
+            types for the gRPC server, generate only gateway handlers).
+
+            ### buf.yaml
+            ```yaml
+            version: v2
+            deps:
+              - buf.build/googleapis/googleapis
+              - buf.build/google/protobuf
+            ```
+
+            ### buf.gen.yaml
+            ```yaml
+            version: v2
+            managed:
+              enabled: true
+              override:
+                - file_option: go_package_prefix
+                  value: github.com/blackwell-systems/gcp-eventarc-emulator/internal/gen
+            plugins:
+              - remote: buf.build/grpc-ecosystem/gateway:v2
+                out: internal/gen
+                opt:
+                  - paths=source_relative
+                  - generate_unbound_methods=true
+            inputs:
+              - module: buf.build/googleapis/googleapis
+                paths:
+                  - google/cloud/eventarc/v1/eventarc.proto
+                  - google/cloud/eventarc/publishing/v1/publisher.proto
+            ```
+
+            ### Steps
+            1. Create buf.yaml and buf.gen.yaml as above.
+            2. Run `buf generate` — with paths=source_relative, buf mirrors the proto
+               source path under the out dir. Generated files:
+               - `internal/gen/google/cloud/eventarc/v1/eventarc.pb.gw.go`
+               - `internal/gen/google/cloud/eventarc/publishing/v1/publisher.pb.gw.go`
+            3. The generated files export:
+               - `RegisterEventarcHandlerFromEndpoint(ctx, mux, endpoint, opts)`
+               - `RegisterEventarcHandlerClient(ctx, mux, client)`
+               - `RegisterPublisherHandlerFromEndpoint(ctx, mux, endpoint, opts)`
+               - `RegisterPublisherHandlerClient(ctx, mux, client)`
+            4. Add buf to Makefile:
+               ```makefile
+               proto:
+                   buf generate
+               ```
+            5. Commit the generated files (same pattern as googleapis/google-cloud-go).
+            6. Add `github.com/grpc-ecosystem/grpc-gateway/v2` to go.mod via:
+               `go get github.com/grpc-ecosystem/grpc-gateway/v2`
+
+            ### Critical: import compatibility
+            The generated gateway code will import proto types by their proto
+            package path. Verify that the generated code imports from
+            `cloud.google.com/go/eventarc/apiv1/eventarcpb` (same as server.go)
+            rather than generating duplicate types. If there is a type mismatch,
+            the fix is to use `buf.gen.yaml` `override` options to point the
+            gateway codegen at the existing Go package.
+
+            If buf cannot reconcile the types, fallback: use
+            `RegisterEventarcHandlerClient` (which takes a client, not an endpoint)
+            and pass a local gRPC client connected via bufconn to the running server.
+            This avoids the type mismatch entirely.
+
+            ### Verification gate
+            ```bash
+            buf generate
+            go build ./internal/gen/...
+            go vet ./internal/gen/...
+            ```
+
+            ### Constraints
+            - Do NOT run protoc-gen-go or protoc-gen-go-grpc — only grpc-gateway plugin.
+            - Generated files must be committed to the repo (not .gitignored).
+            - Add buf.lock to .gitignore (regenerated on each buf generate).
+            - buf version: v2 syntax.
+          files:
+            - buf.yaml
+            - buf.gen.yaml
+            - internal/gen/google/cloud/eventarc/v1/eventarc.pb.gw.go
+            - internal/gen/google/cloud/eventarc/publishing/v1/publisher.pb.gw.go
+        - id: B
+          task: |
+            ## Wave 4 Agent B — REST Gateway
+
+            Implement the HTTP/JSON REST gateway using grpc-gateway runtime.
+            The gateway proxies all REST calls to the local gRPC server.
+
+            ### internal/gateway/gateway.go
+            ```go
+            package gateway
+
+            import (
+                "github.com/grpc-ecosystem/grpc-gateway/v2/runtime"
+                "google.golang.org/grpc"
+                "google.golang.org/grpc/credentials/insecure"
+                gw "github.com/blackwell-systems/gcp-eventarc-emulator/internal/gen/google/cloud/eventarc/v1"
+                pubgw "github.com/blackwell-systems/gcp-eventarc-emulator/internal/gen/google/cloud/eventarc/publishing/v1"
+            )
+
+            type Gateway struct {
+                mux        *runtime.ServeMux
+                httpServer *http.Server
+                conn       *grpc.ClientConn
+            }
+
+            func New(grpcAddr string) (*Gateway, error)
+            func (g *Gateway) Start(httpAddr string) error
+            func (g *Gateway) Stop(ctx context.Context) error
+            ```
+
+            ### Implementation
+            ```go
+            func New(grpcAddr string) (*Gateway, error) {
+                mux := runtime.NewServeMux(
+                    runtime.WithMarshalerOption(runtime.MIMEWildcard, &runtime.JSONPb{
+                        MarshalOptions:   protojson.MarshalOptions{EmitUnpopulated: true, UseProtoNames: true},
+                        UnmarshalOptions: protojson.UnmarshalOptions{DiscardUnknown: true},
+                    }),
+                )
+                opts := []grpc.DialOption{grpc.WithTransportCredentials(insecure.NewCredentials())}
+                ctx := context.Background()
+
+                if err := gw.RegisterEventarcHandlerFromEndpoint(ctx, mux, grpcAddr, opts); err != nil {
+                    return nil, err
+                }
+                if err := pubgw.RegisterPublisherHandlerFromEndpoint(ctx, mux, grpcAddr, opts); err != nil {
+                    return nil, err
+                }
+
+                // Health endpoint — HandlePath returns an error, must be checked
+                if err := mux.HandlePath("GET", "/health", func(w http.ResponseWriter, r *http.Request, _ map[string]string) {
+                    w.Header().Set("Content-Type", "application/json")
+                    w.Write([]byte(`{"status":"healthy"}`))
+                }); err != nil {
+                    return nil, fmt.Errorf("register health handler: %w", err)
+                }
+
+                return &Gateway{mux: mux}, nil
+            }
+            ```
+
+            ### Tests (gateway_test.go)
+            Spin up a real gRPC server (bufconn) + gateway, make HTTP requests:
+            - TestGateway_CreateTrigger_REST — POST /v1/projects/p/locations/l/triggers
+            - TestGateway_GetTrigger_REST — GET /v1/projects/p/locations/l/triggers/t
+            - TestGateway_ListTriggers_REST — GET /v1/projects/p/locations/l/triggers
+            - TestGateway_DeleteTrigger_REST — DELETE /v1/projects/p/locations/l/triggers/t
+            - TestGateway_Health — GET /health returns 200
+
+            ### Verification gate
+            ```bash
+            go build ./internal/gateway/...
+            go vet ./internal/gateway/...
+            go test ./internal/gateway/... -v
+            ```
+
+            ### Constraints
+            - Use `EmitUnpopulated: true, UseProtoNames: true` on the JSON marshaler
+              to match GCP API response format (same as other emulators).
+            - Gateway connects to gRPC server via insecure loopback — no TLS.
+            - If generated handler types conflict with cloud.google.com/go types,
+              use RegisterEventarcHandlerClient with a local client instead of
+              RegisterEventarcHandlerFromEndpoint (see Wave 4 Agent A fallback note).
+          files:
+            - internal/gateway/gateway.go
+            - internal/gateway/gateway_test.go
+        - id: C
+          task: |
+            ## Wave 4 Agent C — REST and Dual cmd Entrypoints
+
+            Create the REST-only and dual (gRPC + REST) server entrypoints,
+            following the exact pattern from gcp-secret-manager-emulator's
+            cmd/server-rest/main.go and cmd/server-dual/main.go.
+
+            Both entrypoints use the shared NewGRPCServer() helper from
+            internal/server (Wave 2 Agent B) to avoid duplicating service
+            registration logic.
+
+            ### cmd/server-rest/main.go
+            - Starts gRPC server on an internal port (default: 9086, not exposed)
+            - Starts gateway on HTTP port (default: 8085, env: EVENTARC_HTTP_PORT)
+            - gRPC is internal-only; external clients use HTTP
+            - Env vars: EVENTARC_HTTP_PORT, GCP_MOCK_LOG_LEVEL
+            - Log: "GCP Eventarc Emulator v{version} (REST)"
+
+            ### cmd/server-dual/main.go
+            - Starts gRPC on external port (default: 9085, env: EVENTARC_EMULATOR_HOST port)
+            - Starts gateway on HTTP port (default: 8085, env: EVENTARC_HTTP_PORT)
+            - Both protocols exposed
+            - Log: "GCP Eventarc Emulator v{version} (gRPC + REST)"
+
+            Both use the same shutdown pattern:
+            ```go
+            srv, _ := server.NewServer()
+            pub := publisher.NewServer(router.NewRouter(srv.Storage()), dispatcher.NewDispatcher(nil))
+            grpcSrv := server.NewGRPCServer(srv, pub)
+            gw, _ := gateway.New(fmt.Sprintf("localhost:%d", grpcPort))
+
+            go grpcSrv.Serve(grpcLis)
+            go gw.Start(fmt.Sprintf(":%d", httpPort))
+
+            // shutdown: gw.Stop(ctx) then grpcSrv.GracefulStop()
+            ```
+
+            ### Update Makefile
+            Add build targets:
+            ```makefile
+            build-grpc:
+                go build -o gcp-eventarc-emulator ./cmd/server
+
+            build-rest:
+                go build -o gcp-eventarc-emulator-rest ./cmd/server-rest
+
+            build-dual:
+                go build -o gcp-eventarc-emulator-dual ./cmd/server-dual
+
+            build: build-grpc build-rest build-dual
+            ```
+
+            ### Verification gate
+            ```bash
+            go build ./cmd/server-rest && go build ./cmd/server-dual
+            go vet ./cmd/server-rest/... ./cmd/server-dual/...
+            ```
+
+            ### Constraints
+            - Use NewGRPCServer() from internal/server — do NOT inline service
+              registration in main.go files.
+            - Keep getEnv/getEnvInt helpers consistent with cmd/server/main.go.
+            - REST-only: gRPC port should be on a random/ephemeral port or a
+              fixed internal port that isn't documented as user-facing.
+          files:
+            - cmd/server-rest/main.go
+            - cmd/server-dual/main.go
+quality_gates:
+    level: standard
+    gates:
+        - type: build
+          command: go build ./...
+          required: true
+        - type: lint
+          command: go vet ./...
+          required: true
+        - type: test
+          command: go test ./...
+          required: true
+pre_mortem:
+    overall_risk: medium
+    rows:
+        - scenario: eventarcpb package path or service interface name is wrong
+          likelihood: medium
+          impact: high
+          mitigation: |
+            Before writing any code, Wave 1 Agent A must run:
+            `go get cloud.google.com/go/eventarc/apiv1` and inspect
+            the generated package to confirm the import path, service
+            interface name (EventarcServer), and registration function.
+            All subsequent agents depend on this being correct.
+        - scenario: longrunning proto import path mismatch
+          likelihood: medium
+          impact: medium
+          mitigation: |
+            Wave 1 Agent C must verify the longrunning package path after
+            `go mod tidy`. Try `cloud.google.com/go/longrunning/autogen/longrunningpb`
+            first; if missing, try `cloud.google.com/go/longrunning/autogen/longrunningpb`.
+            Document the correct path in a comment at the top of store.go.
+        - scenario: circular import between router and server packages
+          likelihood: medium
+          impact: medium
+          mitigation: |
+            Wave 3 Agent A uses a StorageReader interface to avoid importing
+            server package. Wave 3 Agent C uses RouterMatcher and EventDispatcher
+            interfaces in the intake package. Both are specified in the interface
+            contracts — agents must follow them exactly.
+        - scenario: CloudEvent binary format header parsing ambiguity
+          likelihood: low
+          impact: low
+          mitigation: |
+            Wave 3 Agent C should handle both `ce-type` and `Ce-Type` header
+            casing (use http.Header.Get which is case-insensitive).
+            Minimum viable: just support `type` (structured) and `ce-type` (binary).
+        - scenario: buf-generated gateway types conflict with cloud.google.com/go/eventarc types
+          likelihood: high
+          impact: high
+          mitigation: |
+            Wave 4 Agent A must verify type compatibility before Wave 4 Agent B
+            writes any gateway code. If buf generates duplicate proto types that
+            don't match cloud.google.com/go/eventarc/apiv1/eventarcpb, use the
+            RegisterEventarcHandlerClient fallback (takes a gRPC client, not an
+            endpoint string) with a local insecure client. This sidesteps the
+            type conflict entirely — the client uses cloud.google.com/go types
+            and the gateway just forwards HTTP to it.
+            Wave 4 Agent A must document the resolution in a comment at the top
+            of internal/gateway/gateway.go before Agent B starts.
+        - scenario: Publishing proto package (publishingpb) may not exist as separate Go module
+          likelihood: medium
+          impact: medium
+          mitigation: |
+            Wave 3 Agent C must run `go get cloud.google.com/go/eventarc/publishing/apiv1`
+            and verify the package exists before coding. If publishingpb is not a
+            separate module, the Publisher service can be implemented as an HTTP-only
+            endpoint (POST /events) and the gRPC Publisher can be deferred. The
+            fallback is clearly stated in the Agent C constraints.
+        - scenario: Provider resource seeding is too simplistic for real client use
+          likelihood: low
+          impact: low
+          mitigation: |
+            The static provider list covers common test scenarios. If the real
+            client queries for a specific provider not in the list, return NotFound
+            rather than panicking. Extend the list incrementally as needed.
+critic_report:
+    verdict: PASS
+    agent_reviews:
+        W1-A:
+            agent_id: W1-A
+            verdict: PASS
+        W1-B:
+            agent_id: W1-B
+            verdict: PASS
+        W1-C:
+            agent_id: W1-C
+            verdict: PASS
+        W2-A:
+            agent_id: W2-A
+            verdict: PASS
+        W2-B:
+            agent_id: W2-B
+            verdict: PASS
+        W3-A:
+            agent_id: W3-A
+            verdict: PASS
+        W3-B:
+            agent_id: W3-B
+            verdict: PASS
+        W3-C:
+            agent_id: W3-C
+            verdict: PASS
+            issues:
+                - check: side_effect_completeness
+                  severity: warning
+                  description: cmd/server/main.go is in the file_ownership table under Wave 3 Agent C (action:modify) and the brief body instructs updating it, but cmd/server/main.go is absent from the task-level files list (lines 984-986, which only list internal/publisher/server.go and internal/publisher/server_test.go). Additionally, the wire-up code shown in the brief still inlines RegisterEventarcServer, RegisterOperationsServer, and RegisterPublisherServer directly, rather than calling server.NewGRPCServer(srv, pub) as the interface contract specifies for all cmd entrypoints. This creates an inconsistent registration pattern between cmd/server and cmd/server-rest/cmd/server-dual.
+                  file: cmd/server/main.go
+                  symbol: server.NewGRPCServer
+        W3-D:
+            agent_id: W3-D
+            verdict: PASS
+        W4-A:
+            agent_id: W4-A
+            verdict: PASS
+        W4-B:
+            agent_id: W4-B
+            verdict: PASS
+            issues:
+                - check: pattern_accuracy
+                  severity: warning
+                  description: 'The brief shows mux.HandlePath("GET", "/health", func(...){}) without capturing the error return. runtime.ServeMux.HandlePath returns an error — the discarded return will cause go vet to warn. The brief should show: if err := mux.HandlePath(...); err != nil { return nil, err }.'
+                  file: internal/gateway/gateway.go
+                  symbol: runtime.ServeMux.HandlePath
+        W4-C:
+            agent_id: W4-C
+            verdict: PASS
+    summary: 'Re-review confirms all 6 previously identified errors are resolved. (1) go.mod now specifies cloud.google.com/go/eventarc v1.18.0, making eventarcpb.HttpEndpoint, Destination_HttpEndpoint, and GetHttpEndpoint() available for all agents that reference them. (2) NewGRPCServer() is fully defined: it appears in the NewGRPCServer interface contract with complete signature, internal/server/grpc.go is in the file_ownership table under Wave 2 Agent B, Wave 2 Agent B''s brief and files list both include grpc.go, and Wave 4 Agent C''s shutdown pattern correctly calls server.NewGRPCServer(srv, pub). (3) The fabricated Publish method is removed from Wave 3 Agent C — the brief now explicitly states PublisherServer has exactly two methods and instructs against adding Publish. (4) cmd/server/main.go now appears as action:modify under Wave 3 Agent C in file_ownership. (5) buf output paths in file_ownership now correctly reflect source_relative mirroring: internal/gen/google/cloud/eventarc/v1/eventarc.pb.gw.go and internal/gen/google/cloud/eventarc/publishing/v1/publisher.pb.gw.go, consistent with the Wave 4 Agent B gateway import paths. (6) go.mod now lists cloud.google.com/go/longrunning v0.6.0 as the module, and the import path cloud.google.com/go/longrunning/autogen/longrunningpb in agent briefs is the correct package path within that module. Two residual warnings remain from the prior run: Wave 4 Agent B''s mux.HandlePath call discards an error return (unchanged advisory); Wave 3 Agent C''s task-level files list does not include cmd/server/main.go (present in file_ownership but absent from the task files array), and the inline registration block in the Wave 3 Agent C brief is inconsistent with the NewGRPCServer design intent of being the single registration point for all entrypoints. None of these warnings block wave execution.'
+    reviewed_at: "2026-04-02T04:59:48Z"
+    issue_count: 2
+state: WAVE_PENDING
