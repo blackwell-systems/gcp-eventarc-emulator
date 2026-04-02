@@ -28,6 +28,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Three server variants** — `cmd/server` (gRPC only), `cmd/server-rest` (REST only), `cmd/server-dual` (gRPC + REST)
 - **IAM integration** — Optional pre-flight authorization via [gcp-emulator-auth](https://github.com/blackwell-systems/gcp-emulator-auth) with 36 permission mappings; off/permissive/strict modes
 - **In-memory storage** — Thread-safe with `sync.RWMutex`, `proto.Clone` for safe copies, integer-offset pagination, sorted list results
-- **Integration tests** — End-to-end tests covering Trigger CRUD, Provider queries, and error cases via bufconn
+- **Integration tests** — End-to-end tests via bufconn covering Trigger CRUD, Channel CRUD, MessageBus CRUD, Pipeline CRUD, GoogleChannelConfig, Provider queries, error cases, and full-stack PublishEvents → Router → Dispatcher → HTTP delivery
+- **CI pipeline** — GitHub Actions with test (matrix: ubuntu/macOS/windows, Go 1.24/1.25), lint (golangci-lint), format check, go vet, and build verification for all three server variants
 
 [0.1.0]: https://github.com/blackwell-systems/gcp-eventarc-emulator/releases/tag/v0.1.0
