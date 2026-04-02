@@ -1,1 +1,7 @@
-server
+# Build output binaries
+/server
+/server-rest
+/server-dual
+cmd/server/server
+cmd/server-rest/server-rest
+cmd/server-dual/server-dual
