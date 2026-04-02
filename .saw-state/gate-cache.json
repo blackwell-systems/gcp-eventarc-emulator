@@ -1,0 +1,40 @@
+{
+  "entries": {
+    "35c55951a74925caec1de8855202399e": {
+      "build": {
+        "gate_type": "build",
+        "command": "go build ./...",
+        "passed": false,
+        "exit_code": 1,
+        "stdout": "",
+        "stderr": "pattern ./...: directory prefix . does not contain main module or its selected dependencies\n",
+        "from_cache": true,
+        "cached_at": "2026-04-01T22:03:16.775163-07:00"
+      }
+    },
+    "9708b5bb6b2fc029d913892ddc7ca9f2": {
+      "test": {
+        "gate_type": "test",
+        "command": "go test ./...",
+        "passed": false,
+        "exit_code": 1,
+        "stdout": "FAIL\t./... [setup failed]\nFAIL\n",
+        "stderr": "# ./...\npattern ./...: directory prefix . does not contain main module or its selected dependencies\n",
+        "from_cache": true,
+        "cached_at": "2026-04-01T22:03:17.006964-07:00"
+      }
+    },
+    "e078b573c568f5b9c030e3e8862c4ad6": {
+      "lint": {
+        "gate_type": "lint",
+        "command": "go vet ./...",
+        "passed": false,
+        "exit_code": 1,
+        "stdout": "",
+        "stderr": "pattern ./...: directory prefix . does not contain main module or its selected dependencies\n",
+        "from_cache": true,
+        "cached_at": "2026-04-01T22:03:16.896615-07:00"
+      }
+    }
+  }
+}
