@@ -5,11 +5,20 @@
 [![Go Version](https://img.shields.io/badge/go-1.24+-blue.svg)](https://go.dev/)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 
-> **Full Eventarc emulator** — Create triggers, publish CloudEvents, and route them to HTTP destinations locally. No GCP credentials required.
+> **Production-grade GCP Eventarc emulator** — full API surface (47 RPCs), CloudEvent routing with CEL conditions, and multi-protocol support (gRPC + REST + CloudEvents). Run Eventarc locally with no GCP credentials.
 
-A production-grade Eventarc implementation with optional **pre-flight IAM enforcement**. Implements all 40 Eventarc v1 RPCs + the Publishing v1 service, CloudEvent routing with CEL condition evaluation, and HTTP delivery in binary content mode.
+Implements the full Eventarc v1 API surface (40 RPCs) plus the Publishing service, including CloudEvent routing, CEL-based trigger matching, and HTTP delivery in binary content mode. Optional IAM enforcement integrates with the local [GCP IAM control plane](https://github.com/blackwell-systems/gcp-iam-control-plane).
 
-**Triple protocol support**: Native gRPC + REST/HTTP (via grpc-gateway) + CloudEvents binary mode delivery.
+Enables local development, integration testing, and CI pipelines for event-driven systems without requiring access to GCP.
+
+## Key Capabilities
+
+- Full Eventarc API surface (47 RPCs including Publishing + Operations)
+- CloudEvent routing with attribute filters and CEL condition evaluation
+- HTTP delivery in CloudEvents binary content mode (`ce-*` headers)
+- Triple protocol support: gRPC, REST (grpc-gateway), and CloudEvents
+- Optional IAM enforcement via local GCP IAM emulator
+- Drop-in compatibility with GCP SDKs (no code changes required)
 
 ## Quick Start
 
@@ -45,7 +54,7 @@ curl "http://localhost:8085/v1/projects/my-project/locations/us-central1/provide
 
 ---
 
-## How It Works
+## Architecture
 
 ```
                    ┌─────────────────────────────┐
@@ -368,25 +377,15 @@ go test -race ./...
 go test -v -run TestIntegration ./...
 ```
 
-## Differences from Real GCP
+## Differences from GCP
 
-**Intentional simplifications:**
+- In-memory storage (no persistence)
+- Immediate LRO resolution (no async operations)
 - Optional IAM enforcement (off by default)
-- In-memory storage (no persistence across restarts)
-- LROs resolve immediately (no async processing)
-- No encryption at rest
-- No regional constraints or replication
-- Provider list is static (seeded at startup)
+- No regional replication or constraints
+- Static provider list (seeded at startup)
 
-**Perfect for:**
-- Local development and testing
-- CI/CD pipelines
-- Integration testing with CloudEvents
-- Prototyping Eventarc workflows offline
-
-**Not for:**
-- Production use
-- Performance benchmarking
+Designed for local development and testing — not production use.
 
 ---
 
@@ -396,7 +395,7 @@ This project is not affiliated with, endorsed by, or sponsored by Google LLC or 
 
 ## Maintained By
 
-Maintained by **Dayna Blackwell** — founder of Blackwell Systems, building reference infrastructure for cloud-native development.
+Maintained by **Dayna Blackwell** — founder of Blackwell Systems, building reference infrastructure for cloud and AI systems.
 
 [GitHub](https://github.com/blackwell-systems) · [LinkedIn](https://linkedin.com/in/dayna-blackwell) · [Blog](https://blog.blackwell-systems.com)
 
