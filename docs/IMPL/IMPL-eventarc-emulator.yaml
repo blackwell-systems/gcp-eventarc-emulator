@@ -1351,7 +1351,6 @@ post_merge_checklist:
 completion_reports:
     A:
         status: complete
-        branch: wave2-agent-A
         commit: 7fa5986
         files_changed:
             - internal/authz/permissions.go
@@ -1368,7 +1367,6 @@ completion_reports:
         notes: All 15 tests pass. permissionMap covers all 7 Eventarc operations (5 trigger + 2 provider). GetPermission, NormalizeParentForCreate, NormalizeTriggerResource all implemented. Pre-commit hook confirmed build+vet clean.
     B:
         status: complete
-        branch: wave2-agent-B
         commit: 00abd0f
         files_changed:
             - internal/server/server.go
