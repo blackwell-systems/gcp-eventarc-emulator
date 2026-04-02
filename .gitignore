@@ -5,3 +5,6 @@
 cmd/server/server
 cmd/server-rest/server-rest
 cmd/server-dual/server-dual
+gcp-eventarc-emulator
+*.test
+.env
