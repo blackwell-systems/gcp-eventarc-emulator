@@ -1,5 +1,17 @@
 {
   "entries": {
+    "005073b263bfbd386ec614dc814bbac5": {
+      "test": {
+        "gate_type": "test",
+        "command": "go test ./...",
+        "passed": true,
+        "exit_code": 0,
+        "stdout": "ok  \tgithub.com/blackwell-systems/gcp-eventarc-emulator\t(cached)\n?   \tgithub.com/blackwell-systems/gcp-eventarc-emulator/cmd/server\t[no test files]\nok  \tgithub.com/blackwell-systems/gcp-eventarc-emulator/internal/authz\t(cached)\nok  \tgithub.com/blackwell-systems/gcp-eventarc-emulator/internal/dispatcher\t(cached)\nok  \tgithub.com/blackwell-systems/gcp-eventarc-emulator/internal/lro\t(cached)\nok  \tgithub.com/blackwell-systems/gcp-eventarc-emulator/internal/publisher\t(cached)\nok  \tgithub.com/blackwell-systems/gcp-eventarc-emulator/internal/router\t(cached)\nok  \tgithub.com/blackwell-systems/gcp-eventarc-emulator/internal/server\t(cached)\n",
+        "stderr": "",
+        "from_cache": true,
+        "cached_at": "2026-04-02T00:15:27.257566-07:00"
+      }
+    },
     "068dd85331371a4c061b3986ffd4bb62": {
       "test": {
         "gate_type": "test",
@@ -96,6 +108,18 @@
         "cached_at": "2026-04-02T00:06:21.453004-07:00"
       }
     },
+    "2844b6c00247254c3d37ea1c925fdb51": {
+      "lint": {
+        "gate_type": "lint",
+        "command": "go vet ./...",
+        "passed": true,
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": "",
+        "from_cache": true,
+        "cached_at": "2026-04-02T00:15:26.85835-07:00"
+      }
+    },
     "2936ae3360730215ada1ec30cd74fd1c": {
       "lint": {
         "gate_type": "lint",
@@ -142,6 +166,18 @@
         "stderr": "",
         "from_cache": true,
         "cached_at": "2026-04-01T22:04:19.144693-07:00"
+      }
+    },
+    "4680f098f6d49534af00f30ca2f50905": {
+      "build": {
+        "gate_type": "build",
+        "command": "go build ./...",
+        "passed": true,
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": "",
+        "from_cache": true,
+        "cached_at": "2026-04-02T00:15:26.427723-07:00"
       }
     },
     "614d52c56866bf9884e83ec2a9550c8b": {

@@ -1,3 +1,4 @@
+completion_date: "2026-04-02"
 title: GCP Eventarc Emulator — Initial Implementation
 feature_slug: eventarc-emulator
 verdict: SUITABLE
@@ -1329,6 +1330,7 @@ waves:
           files:
             - cmd/server-rest/main.go
             - cmd/server-dual/main.go
+      base_commit: f2de1484d394c535a6f7cf6dbdd55641db601a9e
 quality_gates:
     level: standard
     gates:
@@ -1352,56 +1354,47 @@ post_merge_checklist:
 completion_reports:
     A:
         status: complete
-        commit: 76f498f
+        branch: saw/eventarc-emulator/wave4-agent-A
+        commit: 2f050eb
         files_changed:
-            - internal/router/router.go
-            - internal/router/router_test.go
+            - buf.yaml
+            - buf.gen.yaml
+            - .gitignore
+            - Makefile
+            - go.mod
+            - go.sum
+            - internal/gen/google/cloud/eventarc/v1/eventarc.pb.gw.go
+            - internal/gen/google/cloud/eventarc/v1/types.go
+            - internal/gen/google/cloud/eventarc/publishing/v1/publisher.pb.gw.go
+            - internal/gen/google/cloud/eventarc/publishing/v1/types.go
         files_created:
-            - internal/router/router.go
-            - internal/router/router_test.go
-        tests_added:
-            - TestMatch_ExactFilter_Matches
-            - TestMatch_ExactFilter_NoMatch
-            - TestMatch_MultipleFilters_AllMustMatch
-            - TestMatch_EmptyTriggers_ReturnsEmpty
-            - TestMatch_NoFilters_MatchesAll
-            - TestAttrValue_StandardAttrs
-            - TestAttrValue_ExtensionAttr
+            - buf.yaml
+            - buf.gen.yaml
+            - internal/gen/google/cloud/eventarc/v1/eventarc.pb.gw.go
+            - internal/gen/google/cloud/eventarc/v1/types.go
+            - internal/gen/google/cloud/eventarc/publishing/v1/publisher.pb.gw.go
+            - internal/gen/google/cloud/eventarc/publishing/v1/types.go
         verification: PASS
-        notes: 'All 7 tests pass. One fix needed during implementation: CloudEvents SDK v1 spec attributes like ''dataschema'' cannot be set via SetExtension (SDK rejects them as reserved). Updated TestAttrValue_ExtensionAttr to use ''customtag'' as a genuinely custom extension. The attrValue helper uses fmt.Sprintf for extension values since the SDK normalizes types (string stays string, URIs become types.URIRef). Pre-commit hook (go vet + go build) passed at commit time.'
+        notes: 'buf v2 setup complete. Used git_repo input pointing to googleapis/googleapis on GitHub (Eventarc protos are not in buf.build/googleapis/googleapis BSR module). Generated gateway-only files using buf.build/grpc-ecosystem/gateway:v2.28.0 with go_package_prefix override. Added type-alias shim files (types.go) in each generated package so gateway code compiles without running protoc-gen-go: eventarcv1 shims re-export from cloud.google.com/go/eventarc/apiv1/eventarcpb, publishingv1 shims from cloud.google.com/go/eventarc/publishing/apiv1/publishingpb. All four Register* functions exported per service. go build ./... go vet ./... go test ./... all pass. buf.lock added to .gitignore. proto target added to Makefile. Downstream agent C (cmd/server-rest) should use RegisterEventarcHandlerFromEndpoint or RegisterEventarcHandlerClient from these generated packages.'
     B:
         status: complete
-        commit: 94bafe1
-        files_changed:
-            - internal/dispatcher/http.go
-            - internal/dispatcher/http_test.go
-        files_created:
-            - internal/dispatcher/http.go
-            - internal/dispatcher/http_test.go
-        tests_added:
-            - TestDispatch_HttpEndpoint_Success
-            - TestDispatch_HttpEndpoint_Returns404
-            - TestDispatch_CloudRunDestination_UsesBaseURL
-            - TestDispatch_UnsupportedDestination_ReturnsError
-            - TestDispatch_ContentType_IsCloudEventsJSON
+        commit: cc10153
         verification: PASS
-        notes: All 5 tests pass. Dispatcher supports HttpEndpoint and CloudRun destinations. EVENTARC_CLOUDRUN_BASE_URL env var respected. Non-2xx responses returned as status codes, not errors. No retries per constraints.
+        notes: Hand-rolled implementation superseded by grpc-gateway runtime.ServeMux using Agent A generated files. Gateway.go rewritten by orchestrator to use RegisterEventarcHandlerClient + RegisterPublisherHandlerClient.
     C:
         status: complete
-        commit: 8ac7ec3
+        branch: saw/eventarc-emulator/wave4-agent-C
+        commit: cffec4e
         files_changed:
-            - internal/publisher/server.go
-            - internal/publisher/server_test.go
-            - cmd/server/main.go
+            - cmd/server-rest/main.go
+            - cmd/server-dual/main.go
+            - internal/gateway/gateway.go
         files_created:
-            - internal/publisher/server.go
-            - internal/publisher/server_test.go
-        tests_added:
-            - TestPublishEvents_MatchingTrigger_Dispatches
-            - TestPublishEvents_NoMatchingTriggers_ReturnsEmpty
-            - TestPublishChannelConnectionEvents_Dispatches
+            - cmd/server-rest/main.go
+            - cmd/server-dual/main.go
+            - internal/gateway/gateway.go
         verification: PASS
-        notes: 'Publisher gRPC service complete. All 3 tests pass. cmd/server/main.go wired with NewGRPCServer plus HTTP /events endpoint (EVENTARC_EVENTS_PORT default 8085). Out-of-scope deps: internal/router (Agent A) and internal/dispatcher (Agent B) were checked out from sibling branches to satisfy pre-commit build gate — integration agent should attribute those files to their respective owners.'
+        notes: 'REST entrypoint: internal gRPC on :9086 + HTTP gateway on EVENTARC_HTTP_PORT (default 8085). Dual entrypoint: external gRPC on EVENTARC_EMULATOR_HOST port (default 9085) + HTTP gateway on EVENTARC_HTTP_PORT. Both use server.NewGRPCServer() for service registration. Created gateway stub (internal/gateway/gateway.go) to unblock compilation — Agent B must replace with full grpc-gateway impl. Out-of-scope deps: (1) Makefile build targets (build-grpc/build-rest/build-dual) owned by Wave 1 Agent A; (2) internal/gateway/gateway.go full grpc-gateway impl owned by Wave 4 Agent B (stub created for compilation only). All tests pass (go test ./...).'
     D:
         status: complete
         commit: 210f109
@@ -1533,4 +1526,4 @@ critic_report:
     summary: 'Re-review confirms all 6 previously identified errors are resolved. (1) go.mod now specifies cloud.google.com/go/eventarc v1.18.0, making eventarcpb.HttpEndpoint, Destination_HttpEndpoint, and GetHttpEndpoint() available for all agents that reference them. (2) NewGRPCServer() is fully defined: it appears in the NewGRPCServer interface contract with complete signature, internal/server/grpc.go is in the file_ownership table under Wave 2 Agent B, Wave 2 Agent B''s brief and files list both include grpc.go, and Wave 4 Agent C''s shutdown pattern correctly calls server.NewGRPCServer(srv, pub). (3) The fabricated Publish method is removed from Wave 3 Agent C — the brief now explicitly states PublisherServer has exactly two methods and instructs against adding Publish. (4) cmd/server/main.go now appears as action:modify under Wave 3 Agent C in file_ownership. (5) buf output paths in file_ownership now correctly reflect source_relative mirroring: internal/gen/google/cloud/eventarc/v1/eventarc.pb.gw.go and internal/gen/google/cloud/eventarc/publishing/v1/publisher.pb.gw.go, consistent with the Wave 4 Agent B gateway import paths. (6) go.mod now lists cloud.google.com/go/longrunning v0.6.0 as the module, and the import path cloud.google.com/go/longrunning/autogen/longrunningpb in agent briefs is the correct package path within that module. Two residual warnings remain from the prior run: Wave 4 Agent B''s mux.HandlePath call discards an error return (unchanged advisory); Wave 3 Agent C''s task-level files list does not include cmd/server/main.go (present in file_ownership but absent from the task files array), and the inline registration block in the Wave 3 Agent C brief is inconsistent with the NewGRPCServer design intent of being the single registration point for all entrypoints. None of these warnings block wave execution.'
     reviewed_at: "2026-04-02T04:59:48Z"
     issue_count: 2
-state: WAVE_PENDING
+state: COMPLETE
