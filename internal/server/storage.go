@@ -18,13 +18,59 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
+// providerEventType describes a single event type for a provider.
+type providerEventType struct {
+	typeURI     string
+	description string
+}
+
 // defaultProviders is the set of well-known Eventarc providers seeded at startup.
-var defaultProviders = []struct{ id, displayName string }{
-	{"pubsub.googleapis.com", "Cloud Pub/Sub"},
-	{"storage.googleapis.com", "Cloud Storage"},
-	{"run.googleapis.com", "Cloud Run"},
-	{"cloudfunctions.googleapis.com", "Cloud Functions"},
-	{"cloudscheduler.googleapis.com", "Cloud Scheduler"},
+// Event types match the real GCP Eventarc provider catalog.
+var defaultProviders = []struct {
+	id          string
+	displayName string
+	eventTypes  []providerEventType
+}{
+	{
+		id:          "pubsub.googleapis.com",
+		displayName: "Cloud Pub/Sub",
+		eventTypes: []providerEventType{
+			{"google.cloud.pubsub.topic.v1.messagePublished", "A message is published to a Pub/Sub topic."},
+		},
+	},
+	{
+		id:          "storage.googleapis.com",
+		displayName: "Cloud Storage",
+		eventTypes: []providerEventType{
+			{"google.cloud.storage.object.v1.finalized", "An object is created or overwritten."},
+			{"google.cloud.storage.object.v1.archived", "A live version of an object is archived or deleted."},
+			{"google.cloud.storage.object.v1.deleted", "An object is permanently deleted."},
+			{"google.cloud.storage.object.v1.metadataUpdated", "The metadata of an existing object changes."},
+		},
+	},
+	{
+		id:          "run.googleapis.com",
+		displayName: "Cloud Run",
+		eventTypes: []providerEventType{
+			{"google.cloud.run.job.v1.executed", "A Cloud Run job execution finishes."},
+		},
+	},
+	{
+		id:          "cloudfunctions.googleapis.com",
+		displayName: "Cloud Functions",
+		eventTypes: []providerEventType{
+			{"google.cloud.functions.function.v2.created", "A Cloud Functions function is created."},
+			{"google.cloud.functions.function.v2.updated", "A Cloud Functions function is updated."},
+			{"google.cloud.functions.function.v2.deleted", "A Cloud Functions function is deleted."},
+		},
+	},
+	{
+		id:          "cloudscheduler.googleapis.com",
+		displayName: "Cloud Scheduler",
+		eventTypes: []providerEventType{
+			{"google.cloud.scheduler.job.v1.executed", "A Cloud Scheduler job is executed."},
+		},
+	},
 }
 
 // Storage is the in-memory store for Eventarc resources.
@@ -58,9 +104,17 @@ func NewStorage() *Storage {
 	// Seed providers using a synthetic parent that allows wildcard matching.
 	for _, p := range defaultProviders {
 		name := fmt.Sprintf("projects/-/locations/-/providers/%s", p.id)
+		et := make([]*eventarcpb.EventType, 0, len(p.eventTypes))
+		for _, t := range p.eventTypes {
+			et = append(et, &eventarcpb.EventType{
+				Type:        t.typeURI,
+				Description: t.description,
+			})
+		}
 		s.providers[name] = &eventarcpb.Provider{
 			Name:        name,
 			DisplayName: p.displayName,
+			EventTypes:  et,
 		}
 	}
 	return s
