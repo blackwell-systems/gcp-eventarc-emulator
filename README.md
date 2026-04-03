@@ -114,47 +114,11 @@ Install grpcurl: https://github.com/fullstorydev/grpcurl
 
 ---
 
-## Supported Operations
+## API Coverage
 
-### Triggers (5 RPCs)
-- `CreateTrigger` / `GetTrigger` / `UpdateTrigger` / `DeleteTrigger` / `ListTriggers`
-- Event filter matching on CloudEvent attributes (type, source, custom extensions)
+Implements the full Eventarc v1 API surface across triggers, channels, message buses, pipelines, and providers, along with the Publishing and Operations services (47 RPCs total).
 
-### Channels (5 RPCs)
-- `CreateChannel` / `GetChannel` / `UpdateChannel` / `DeleteChannel` / `ListChannels`
-
-### Channel Connections (4 RPCs)
-- `CreateChannelConnection` / `GetChannelConnection` / `DeleteChannelConnection` / `ListChannelConnections`
-
-### Google Channel Config (2 RPCs)
-- `GetGoogleChannelConfig` / `UpdateGoogleChannelConfig`
-- Singleton per project/location (no Create/Delete)
-
-### Message Buses (6 RPCs)
-- `CreateMessageBus` / `GetMessageBus` / `UpdateMessageBus` / `DeleteMessageBus` / `ListMessageBuses` / `ListMessageBusEnrollments`
-
-### Enrollments (5 RPCs)
-- `CreateEnrollment` / `GetEnrollment` / `UpdateEnrollment` / `DeleteEnrollment` / `ListEnrollments`
-
-### Pipelines (5 RPCs)
-- `CreatePipeline` / `GetPipeline` / `UpdatePipeline` / `DeletePipeline` / `ListPipelines`
-
-### Google API Sources (5 RPCs)
-- `CreateGoogleApiSource` / `GetGoogleApiSource` / `UpdateGoogleApiSource` / `DeleteGoogleApiSource` / `ListGoogleApiSources`
-
-### Providers (2 RPCs)
-- `GetProvider` / `ListProviders`
-- Seeded with default GCP providers (pubsub, storage, firestore, etc.)
-
-### Publishing (2 RPCs)
-- `PublishEvents` / `PublishChannelConnectionEvents`
-- Unpacks proto CloudEvent → routes → dispatches to matching trigger destinations
-
-### Long-Running Operations
-- All Create/Update/Delete operations return `google.longrunning.Operation` (resolved immediately)
-- Full `OperationsServer`: Get, List, Delete, Cancel, Wait
-
-**Total: 40 Eventarc RPCs + 2 Publisher RPCs + 5 Operations RPCs = 47 RPCs**
+The API surface is compatible with the official GCP Eventarc clients and follows the same request/response structure. See [docs/api.md](docs/api.md) for the full list of supported operations.
 
 ---
 
@@ -337,25 +301,7 @@ gcp-emulator start
 
 ## IAM Integration
 
-Optional permission checks using the [GCP IAM Emulator](https://github.com/blackwell-systems/gcp-iam-emulator).
-
-### IAM Permissions
-
-| Operation | Permission |
-|-----------|-----------|
-| CreateTrigger | `eventarc.triggers.create` |
-| GetTrigger | `eventarc.triggers.get` |
-| UpdateTrigger | `eventarc.triggers.update` |
-| DeleteTrigger | `eventarc.triggers.delete` |
-| ListTriggers | `eventarc.triggers.list` |
-| CreateChannel | `eventarc.channels.create` |
-| GetChannel | `eventarc.channels.get` |
-| UpdateChannel | `eventarc.channels.update` |
-| DeleteChannel | `eventarc.channels.delete` |
-| ListChannels | `eventarc.channels.list` |
-| GetProvider | `eventarc.providers.get` |
-| ListProviders | `eventarc.providers.list` |
-| *...and 24 more* | *All 36 operations have IAM mappings* |
+Optional permission checks using the [GCP IAM Emulator](https://github.com/blackwell-systems/gcp-iam-emulator). All 39 Eventarc operations have IAM permission mappings — see [docs/api.md](docs/api.md) for the full list.
 
 ### Enforcement Modes
 
