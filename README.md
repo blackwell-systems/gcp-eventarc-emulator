@@ -7,7 +7,7 @@
 
 > **Production-grade GCP Eventarc emulator** — full API surface (47 RPCs), CloudEvent routing with CEL conditions, and multi-protocol support (gRPC + REST + CloudEvents). Run Eventarc locally with no GCP credentials.
 
-Implements the full Eventarc v1 API surface (40 RPCs) plus the Publishing service, including CloudEvent routing, CEL-based trigger matching, and HTTP delivery in binary content mode. Optional IAM enforcement integrates with the local [GCP IAM control plane](https://github.com/blackwell-systems/gcp-iam-control-plane).
+Implements the full Eventarc v1 API surface (47 RPCs) plus the Publishing service, including CloudEvent routing, CEL-based trigger matching, and HTTP delivery in binary content mode. Optional IAM enforcement integrates with the local [GCP IAM control plane](https://github.com/blackwell-systems/gcp-iam-control-plane).
 
 Enables local development, integration testing, and CI pipelines for event-driven systems without requiring access to GCP.
 
@@ -55,6 +55,19 @@ curl "http://localhost:8085/v1/projects/my-project/locations/us-central1/trigger
 # List providers
 curl "http://localhost:8085/v1/projects/my-project/locations/us-central1/providers"
 ```
+
+> **Tip:** Pipe curl output through `| jq .` for formatted JSON.
+
+### Verify gRPC connectivity
+
+```bash
+grpcurl -plaintext localhost:9085 list
+# -> google.cloud.eventarc.v1.Eventarc
+# -> google.cloud.eventarc.publishing.v1.Publisher
+# -> google.longrunning.Operations
+```
+
+Install grpcurl: https://github.com/fullstorydev/grpcurl
 
 ---
 
@@ -179,6 +192,8 @@ go install github.com/blackwell-systems/gcp-eventarc-emulator/cmd/server-dual@la
 ```
 
 ### Run Server
+
+> **Note:** Go accepts both `-flag` and `--flag`. Examples use `--` for clarity.
 
 **gRPC server:**
 ```bash
@@ -365,6 +380,9 @@ Optional permission checks using the [GCP IAM Emulator](https://github.com/black
 | `GCP_MOCK_LOG_LEVEL` | `info` | Log level: debug, info, warn, error |
 | `IAM_MODE` | `off` | IAM enforcement: off, permissive, strict |
 | `IAM_EMULATOR_HOST` | `localhost:8080` | IAM emulator address |
+
+> **Note:** `IAM_MODE` and `GCP_MOCK_LOG_LEVEL` use legacy prefixes for
+> backward compatibility. A future release will standardize on `EVENTARC_` prefix.
 
 ---
 
