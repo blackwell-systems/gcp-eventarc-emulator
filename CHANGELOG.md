@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`logger.OrDefault` helper** — `internal/logger` now exports `OrDefault(lgr *Logger) *Logger`; replaces copy-pasted nil-guard blocks in router, dispatcher, and publisher constructors
+- **`PaginatePage[T]` generic helper** — extracted from 9 duplicated `List*` pagination blocks across the storage layer into a single generic function in `internal/server/storage_helpers.go`
+- **`cloneProto[T]` generic helper** — replaces 13 per-type proto clone wrappers with a single generic function; `cloneProvider` preserved as-is (rewrites the `Name` field post-clone)
+- **`newUID` / `newEtag` helpers** — `fmt.Sprintf("%x", rand.Uint64())` extracted into named helpers, eliminating ~15 scattered occurrences
+- **`requireField` validation helper** — ~45 inline `if req.GetX() == ""` blocks in `server.go` replaced with a single `requireField(value, fieldName)` call
+- **`perm()` IAM constant wrapper** — replaces ~40 hardcoded IAM permission strings in `server.go` with lookups via `authz.GetPermission`; panics on unknown operation names so typos surface at test time rather than silently passing
+
+### Fixed
+
+- **Malformed JSON request bodies** — REST gateway now returns `{"code":3,"message":"request body is not valid JSON"}` (HTTP 400) instead of leaking raw proto parse internals (e.g. `proto: (line 1:15): unexpected end of string`) to callers
+- **Startup log bypassed `--log-level`** — All three server binaries used `log.Printf` for the startup banner, which always printed regardless of `--log-level`; replaced with `lgr.Info` so `--log-level error` suppresses it
+- **"Ready" log fired before listener was serving** — `cmd/server` and `cmd/server-rest` logged "Ready" before `grpcServer.Serve` / the HTTP listener confirmed binding; both now use a `readyCh` channel to gate the "Ready" line on confirmed readiness (matching `cmd/server-dual`'s existing pattern)
+- **Dead code removed** — `NormalizeTriggerResource` (and its test `TestNormalizeTriggerResource`) removed from `internal/authz/permissions.go`; the function had no production callers
+
+### Added
+
 - **`/healthz` and `/readyz` endpoints** — REST gateway (`server-rest`, `server-dual`) now exposes `GET /healthz` and `GET /readyz`; both return `{"status":"ok"}` with HTTP 200, giving CI scripts and container orchestrators a machine-readable readiness signal
 - **Leveled logger** (`internal/logger`) — New `Logger` type with `Debug`/`Info`/`Warn`/`Error` methods and `IsDebug() bool`; all three server binaries now propagate `--log-level` to the router, dispatcher, and publisher via variadic constructors so `--log-level debug` actually produces debug output
 - **Port range validation** — `--grpc-port` and `--http-port` flags are now validated to be in the 1–65535 range; out-of-range values exit with a descriptive error message
