@@ -47,10 +47,6 @@ file_ownership:
       agent: B
       wave: 1
       action: modify
-    - file: examples/sdk-demo/main.go
-      agent: C
-      wave: 1
-      action: modify
     - file: README.md
       agent: C
       wave: 1
@@ -620,13 +616,12 @@ waves:
             ```
 
             ### Constraints
-            - Only modify: examples/sdk-demo/main.go, README.md, cmd/server-dual/main.go,
+            - Only modify: README.md, cmd/server-dual/main.go,
               cmd/server/main.go, cmd/server-rest/main.go.
             - Do NOT modify internal/ packages.
             - The cmd mains will be further modified by Agent F in Wave 2 — leave the
               port validation and help text changes to Agent F.
           files:
-            - examples/sdk-demo/main.go
             - README.md
             - cmd/server-dual/main.go
             - cmd/server/main.go

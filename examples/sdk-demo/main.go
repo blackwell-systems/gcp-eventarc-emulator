@@ -8,8 +8,8 @@
 // Usage (local):
 //
 //	go run ./cmd/server-dual                              # start emulator
-//	go run ./examples/webhook-receiver                    # start webhook receiver (separate terminal)
-//	EVENTARC_EMULATOR_HOST=localhost:9085 go run main.go
+//	cd examples/webhook-receiver && go run main.go        # start webhook receiver (separate terminal)
+//	cd examples/sdk-demo && EVENTARC_EMULATOR_HOST=localhost:9085 go run main.go
 //
 // Usage (Docker):
 //
@@ -31,7 +31,9 @@ import (
 	"google.golang.org/api/iterator"
 	"google.golang.org/api/option"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/anypb"
 )
 
@@ -168,6 +170,24 @@ func main() {
 	must(err, "wait for update")
 	fmt.Printf("   labels: %v\n", updated.GetLabels())
 
+	// ── 3b. Ensure channel my-channel exists ─────────────────────────────────
+
+	fmt.Println("\n── 3b. Ensure channel my-channel exists")
+	_, err = client.CreateChannel(ctx, &eventarcpb.CreateChannelRequest{
+		Parent:    parent,
+		ChannelId: "my-channel",
+		Channel:   &eventarcpb.Channel{},
+	})
+	if err != nil {
+		st, _ := status.FromError(err)
+		if st.Code() != codes.AlreadyExists {
+			must(err, "create channel my-channel")
+		}
+		fmt.Println("   channel already exists, continuing")
+	} else {
+		fmt.Println("   created channel my-channel")
+	}
+
 	// ── 7. Publish a CloudEvent via the Publisher service ────────────────────
 	//
 	// Uses the real cloud.google.com/go/eventarc/publishing/apiv1 SDK client —
@@ -200,8 +220,9 @@ func main() {
 		Events:  []*anypb.Any{ceAny},
 	})
 	must(err, "publish events")
-	fmt.Printf("   published: %s (type: %s)\n", ce.GetId(), ce.GetType())
-	fmt.Println("   → event dispatched; check webhook receiver logs for delivery confirmation")
+	fmt.Printf("   published event id: %s\n", ce.GetId())
+	fmt.Printf("   event type: %s\n", ce.GetType())
+	fmt.Printf("   → to find delivery in webhook logs: grep for Ce-Id: %s\n", ce.GetId())
 
 	// ── 8. Delete the trigger ────────────────────────────────────────────────
 
