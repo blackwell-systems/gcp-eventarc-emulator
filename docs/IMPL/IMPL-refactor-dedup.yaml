@@ -1,0 +1,1020 @@
+title: 'Refactor: Eliminate Code Duplication and Design Inconsistencies'
+feature_slug: refactor-dedup
+verdict: SUITABLE
+suitability_assessment: |
+    All nine refactor tasks decompose cleanly into disjoint file sets with no
+    cross-agent conflicts.
+
+    File decomposition: Tasks 1-3 all touch internal/server/storage*.go files;
+    assigned to Agent A as a coherent storage-layer refactor (new files:
+    storage_helpers.go for pagination/clone/uid helpers). Task 4+8 both target
+    internal/server/server.go exclusively; combined into Agent B. Task 5 touches
+    internal/logger/logger.go plus three consumer packages; assigned to Agent C.
+    Tasks 6+7 touch only cmd/server*/main.go; assigned to Agent D. Task 9 touches
+    internal/authz/permissions.go and permissions_test.go; assigned to Agent E. No file appears in
+    more than one agent's ownership.
+
+    Pre-implementation status check:
+    - Tasks 1-3 (pagination, clone, uid): confirmed NOT implemented; duplication
+      present throughout internal/server/storage*.go.
+    - Task 4 (requireField): confirmed NOT implemented; ~50 raw if-blocks in
+      server.go with no helper function present.
+    - Task 5 (logger.OrDefault): confirmed NOT implemented; inline nil-guard in
+      NewRouter, NewDispatcher, NewServer.
+    - Tasks 6+7 (startup log standardization + Ready ordering): confirmed NOT
+      implemented; log.Printf at line 105 of cmd/server/main.go, line 95 of
+      cmd/server-rest/main.go; "Ready" logged before Serve() in both.
+    - Task 8 (IAM constants): confirmed NOT implemented; authz package not
+      imported in server.go; raw strings passed to checkPermission throughout.
+    - Task 9 (NormalizeTriggerResource dead code): confirmed no callers outside
+      the defining file; safe to remove.
+
+    Parallelization value: High. Five agents run independently in Wave 1, each
+    owning 2-6 files with non-trivial logic changes. Go build+test cycle ~10-20s.
+    Estimated time savings vs sequential: ~30-40 min.
+
+    Estimated times:
+    - Scout phase: ~15 min
+    - Agent execution: ~5 agents x ~15 min avg, ~15 min wall clock (parallel)
+    - Merge and verification: ~5 min
+    Total SAW time: ~35 min
+
+    Sequential baseline: ~5 agents x 15 min = 75 min
+    Time savings: ~40 min (~53% faster)
+
+    Recommendation: Clear speedup. Proceed.
+test_command: go test ./...
+lint_command: go vet ./...
+file_ownership:
+    - file: internal/server/storage_helpers.go
+      agent: A
+      wave: 1
+      action: new
+    - file: internal/server/storage.go
+      agent: A
+      wave: 1
+      action: modify
+    - file: internal/server/storage_channel.go
+      agent: A
+      wave: 1
+      action: modify
+    - file: internal/server/storage_pipeline.go
+      agent: A
+      wave: 1
+      action: modify
+    - file: internal/server/storage_messagebus.go
+      agent: A
+      wave: 1
+      action: modify
+    - file: internal/server/server.go
+      agent: B
+      wave: 1
+      action: modify
+    - file: internal/logger/logger.go
+      agent: C
+      wave: 1
+      action: modify
+    - file: internal/router/router.go
+      agent: C
+      wave: 1
+      action: modify
+    - file: internal/dispatcher/http.go
+      agent: C
+      wave: 1
+      action: modify
+    - file: internal/publisher/server.go
+      agent: C
+      wave: 1
+      action: modify
+    - file: cmd/server/main.go
+      agent: D
+      wave: 1
+      action: modify
+    - file: cmd/server-rest/main.go
+      agent: D
+      wave: 1
+      action: modify
+    - file: cmd/server-dual/main.go
+      agent: D
+      wave: 1
+      action: modify
+    - file: internal/authz/permissions.go
+      agent: E
+      wave: 1
+      action: modify
+    - file: internal/authz/permissions_test.go
+      agent: E
+      wave: 1
+      action: modify
+interface_contracts:
+    - name: PaginatePage
+      description: |
+        Generic pagination helper that slices a sorted items slice using
+        integer-offset page tokens. Replaces the duplicated pagination block in
+        all nine List* storage methods. Returns the page slice, next token, and
+        an error if the page token is invalid.
+      definition: |
+        // PaginatePage slices items into a page using integer-offset tokens.
+        // pageToken is an integer string offset; empty string means start from 0.
+        // pageSize is clamped to the range [1, 100]; 0 or negative uses 100.
+        // Returns (page, nextToken, err). nextToken is "" on the last page.
+        func PaginatePage[T any](items []T, pageToken string, pageSize int32) ([]T, string, error)
+      location: internal/server/storage_helpers.go
+    - name: cloneProto
+      description: |
+        Generic single-line proto clone helper replacing 8 per-type clone
+        wrappers. Accepts any proto.Message and returns the same concrete type.
+        cloneProvider is NOT replaced because it also rewrites the Name field
+        and must remain as a dedicated function in storage.go.
+      definition: |
+        // cloneProto returns a deep copy of any proto.Message using proto.Clone.
+        // The returned value is the same concrete type as the input.
+        // Returns nil if m is the zero value of T (nil pointer).
+        func cloneProto[T proto.Message](m T) T
+      location: internal/server/storage_helpers.go
+    - name: newUID
+      description: |
+        Returns a random 64-bit hex string suitable for use as a resource UID.
+        Replaces all occurrences of `fmt.Sprintf("%x", rand.Uint64())` used
+        for UID assignment.
+      definition: |
+        func newUID() string
+      location: internal/server/storage_helpers.go
+    - name: newEtag
+      description: |
+        Returns a random 64-bit hex string suitable for use as a resource etag.
+        Identical implementation to newUID but semantically distinct; replaces all
+        occurrences of `fmt.Sprintf("%x", rand.Uint64())` used for etag assignment.
+      definition: |
+        func newEtag() string
+      location: internal/server/storage_helpers.go
+    - name: requireField
+      description: |
+        Validation helper that returns an InvalidArgument gRPC status error if
+        value is the empty string. Replaces the ~50 repeated if-blocks in
+        internal/server/server.go.
+      definition: |
+        // requireField returns a gRPC InvalidArgument error if value == "".
+        // fieldName is used in the error message: "<fieldName> is required".
+        func requireField(value, fieldName string) error
+      location: internal/server/server.go
+    - name: OrDefault
+      description: |
+        Returns lgr if non-nil, otherwise returns a new info-level Logger.
+        Replaces the three inline nil-guard patterns in router, dispatcher,
+        and publisher packages.
+      definition: |
+        // OrDefault returns lgr if it is non-nil, or a new info-level Logger.
+        func OrDefault(lgr *Logger) *Logger
+      location: internal/logger/logger.go
+waves:
+    - number: 1
+      agents:
+        - id: A
+          task: |
+            ## Agent A — Storage Layer Helpers (Tasks 1, 2, 3)
+
+            ### Context
+            The storage layer lives entirely in `internal/server/` (package `server`).
+            The four storage files are:
+            - `internal/server/storage.go` — triggers, providers
+            - `internal/server/storage_channel.go` — channels, channelConnections, googleChannelConfig
+            - `internal/server/storage_pipeline.go` — pipelines, googleApiSources
+            - `internal/server/storage_messagebus.go` — messageBuses, enrollments
+
+            ### Step 1: Create `internal/server/storage_helpers.go`
+
+            Create a new file `internal/server/storage_helpers.go` in package `server`.
+            It must contain exactly the following four helpers:
+
+            ```go
+            package server
+
+            import (
+                "fmt"
+                "math/rand"
+                "strconv"
+
+                "google.golang.org/grpc/codes"
+                "google.golang.org/grpc/status"
+                "google.golang.org/protobuf/proto"
+            )
+
+            // PaginatePage slices items into a page using integer-offset tokens.
+            // pageToken is an integer string offset; empty string means start from 0.
+            // pageSize is clamped to [1, 100]; 0 or negative defaults to 100.
+            // Returns (page, nextToken, err). nextToken is "" when this is the last page.
+            func PaginatePage[T any](items []T, pageToken string, pageSize int32) ([]T, string, error) {
+                offset := 0
+                if pageToken != "" {
+                    n, err := strconv.Atoi(pageToken)
+                    if err != nil || n < 0 {
+                        return nil, "", status.Errorf(codes.InvalidArgument, "invalid page_token")
+                    }
+                    offset = n
+                }
+                size := int(pageSize)
+                if size <= 0 || size > 100 {
+                    size = 100
+                }
+                end := offset + size
+                if end > len(items) {
+                    end = len(items)
+                }
+                nextToken := ""
+                if end < len(items) {
+                    nextToken = strconv.Itoa(end)
+                }
+                if offset >= len(items) {
+                    return nil, nextToken, nil
+                }
+                return items[offset:end], nextToken, nil
+            }
+
+            // cloneProto returns a deep copy of any proto.Message using proto.Clone.
+            // Returns the zero value of T if m is nil.
+            func cloneProto[T proto.Message](m T) T {
+                return proto.Clone(m).(T)
+            }
+
+            // newUID returns a random 64-bit hex string for use as a resource UID.
+            func newUID() string { return fmt.Sprintf("%x", rand.Uint64()) }
+
+            // newEtag returns a random 64-bit hex string for use as a resource etag.
+            func newEtag() string { return fmt.Sprintf("%x", rand.Uint64()) }
+            ```
+
+            ### Step 2: Update `internal/server/storage.go`
+
+            **Task 2 — Replace clone wrappers:**
+            Remove `cloneTrigger`. Keep `cloneProvider` (it rewrites the Name field
+            and cannot be replaced by the generic). Replace every call to
+            `cloneTrigger(x)` with `cloneProto(x)` throughout the file.
+
+            **Task 3 — Replace UID generation:**
+            In `CreateTrigger`, replace `uid := fmt.Sprintf("%x", rand.Uint64())` with
+            `uid := newUID()`.
+
+            **Task 1 — Replace pagination in `ListTriggers`:**
+            `ListTriggers` uses a slightly different pagination pattern (it sorts then
+            paginates with a guarded `if startIdx < len(all)` slice). Replace the
+            pagination block (lines from `startIdx := 0` through `return results,
+            nextToken, nil`) with:
+            ```go
+            page, nextToken, err := PaginatePage(all, pageToken, pageSize)
+            if err != nil {
+                return nil, "", err
+            }
+            return page, nextToken, nil
+            ```
+
+            **Task 1 — Replace pagination in `ListProviders`:**
+            Same substitution for the equivalent block in `ListProviders`.
+
+            **Imports cleanup:** After replacements, `strconv` and `math/rand` may no
+            longer be needed in storage.go. Remove any unused imports.
+
+            ### Step 3: Update `internal/server/storage_channel.go`
+
+            **Task 2 — Replace clone wrappers:**
+            Remove `cloneChannel`, `cloneChannelConnection`, `cloneGoogleChannelConfig`.
+            Replace every callsite with `cloneProto(x)` (same argument, no other change).
+
+            **Task 3 — Replace UID generation:**
+            In `CreateChannel`, replace `uid := fmt.Sprintf("%x", rand.Uint64())` with
+            `uid := newUID()`.
+            In `CreateChannelConnection`, replace the same pattern with `uid := newUID()`.
+
+            **Task 1 — Replace pagination in `ListChannels`:**
+            Replace the pagination block with `PaginatePage` as shown in Step 2.
+
+            **Task 1 — Replace pagination in `ListChannelConnections`:**
+            Same substitution.
+
+            **Imports cleanup:** Remove unused imports (`strconv`, `math/rand`, `proto`).
+
+            ### Step 4: Update `internal/server/storage_pipeline.go`
+
+            **Task 2 — Replace clone wrappers:**
+            Remove `clonePipeline`, `cloneGoogleApiSource`. Replace all callsites with
+            `cloneProto(x)`.
+
+            **Task 3 — Replace UID/etag generation:**
+            In `CreatePipeline`: replace `uid := fmt.Sprintf("%x", rand.Uint64())` with
+            `uid := newUID()` and `etag := fmt.Sprintf("%x", rand.Uint64())` with
+            `etag := newEtag()`.
+            In `UpdatePipeline`: replace `stored.Etag = fmt.Sprintf("%x", rand.Uint64())`
+            with `stored.Etag = newEtag()`.
+            In `CreateGoogleApiSource`: replace both uid and etag patterns similarly.
+            In `UpdateGoogleApiSource`: replace etag pattern similarly.
+
+            **Task 1 — Replace pagination in `ListPipelines` and `ListGoogleApiSources`:**
+            Same `PaginatePage` substitution.
+
+            **Imports cleanup:** Remove unused imports.
+
+            ### Step 5: Update `internal/server/storage_messagebus.go`
+
+            **Task 2 — Replace clone wrappers:**
+            Remove `cloneMessageBus`, `cloneEnrollment`. Replace all callsites with
+            `cloneProto(x)`.
+
+            **Task 3 — Replace UID/etag generation:**
+            In `CreateMessageBus`: uid → `newUID()`, etag → `newEtag()`.
+            In `UpdateMessageBus`: etag → `newEtag()`.
+            In `CreateEnrollment`: uid → `newUID()`, etag → `newEtag()`.
+            In `UpdateEnrollment`: etag → `newEtag()`.
+
+            **Task 1 — Replace pagination in `ListMessageBuses`, `ListEnrollments`,
+            `ListMessageBusEnrollments`:**
+            Same `PaginatePage` substitution. Note: `ListMessageBusEnrollments` collects
+            `[]string` (not proto messages), so `PaginatePage[string]` is used.
+
+            **Imports cleanup:** Remove unused imports.
+
+            ### Verification Gate
+            ```
+            go build ./internal/server/...
+            go vet ./internal/server/...
+            go test ./internal/server/...
+            ```
+
+            ### Constraints
+            - Do NOT touch `internal/server/server.go` — that is Agent B's file.
+            - Do NOT modify `cloneProvider` in storage.go — it does extra work (rewrites Name).
+            - The generic `cloneProto` must handle nil inputs safely. The current per-type
+              clones all check `if x == nil { return nil }`. The generic version relies on
+              proto.Clone's nil handling: `proto.Clone(nil)` returns nil. Verify that
+              `proto.Clone(m).(T)` with a nil proto.Message panics or not — if it panics,
+              wrap with a nil check: `var zero T; if m == zero { return zero }`. Test this.
+            - Keep file-level comments unchanged; only add/remove/update function bodies and
+              import blocks.
+          files: []
+        - id: B
+          task: |
+            ## Agent B — Server Validation and IAM Constants (Tasks 4, 8)
+
+            ### Context
+            Your single file is `internal/server/server.go` (886 lines). It implements
+            all gRPC RPC handlers. Two independent improvements are needed.
+
+            ### Task 4: Add `requireField` helper and replace ~50 if-blocks
+
+            Add the following unexported function near the top of server.go, after the
+            `checkPermission` method (around line 100):
+
+            ```go
+            // requireField returns a gRPC InvalidArgument error when value is empty.
+            // fieldName is used in the error message, e.g. "name is required".
+            func requireField(value, fieldName string) error {
+                if value == "" {
+                    return status.Errorf(codes.InvalidArgument, "%s is required", fieldName)
+                }
+                return nil
+            }
+            ```
+
+            Then replace every occurrence of the pattern:
+            ```go
+            if req.GetXxx() == "" {
+                return nil, status.Error(codes.InvalidArgument, "xxx is required")
+            }
+            ```
+            with:
+            ```go
+            if err := requireField(req.GetXxx(), "xxx"); err != nil {
+                return nil, err
+            }
+            ```
+
+            Also replace multi-field nil+empty patterns such as:
+            ```go
+            if req.GetTrigger() == nil || req.GetTrigger().GetName() == "" {
+                return nil, status.Error(codes.InvalidArgument, "trigger.name is required")
+            }
+            ```
+            with:
+            ```go
+            if err := requireField(req.GetTrigger().GetName(), "trigger.name"); err != nil {
+                return nil, err
+            }
+            ```
+            (proto getter methods on nil return the zero value, so `req.GetTrigger().GetName()`
+            is safe even when trigger is nil — it returns "".)
+
+            Do NOT use `requireField` for non-empty checks that return different error
+            messages or have special logic. Only replace the standard
+            `"<field> is required"` pattern.
+
+            The following non-standard validations MUST be kept as-is (they have extra
+            conditions or different error messages):
+            - `req.GetParent() == ""` checks that are accompanied by additional validation
+              (e.g., channel_id or trigger_id checks)  — keep each as individual
+              `requireField` calls, one per field.
+            - Any check that tests `req.GetXxx() == nil` where nil is distinct from empty
+              string (e.g., `req.GetChannel() == nil`) — keep as-is unless the same block
+              also checks `.GetName() == ""`, in which case use requireField on the Name.
+
+            There are approximately 50 such if-blocks across the file. Replace all of them.
+
+            ### Task 8: Replace hardcoded IAM permission strings with authz constants
+
+            The `authz` package at `internal/authz/permissions.go` defines `GetPermission`
+            which maps RPC operation names to their permission strings via a `permissionMap`.
+
+            Add the authz import to server.go:
+            ```go
+            "github.com/blackwell-systems/gcp-eventarc-emulator/internal/authz"
+            ```
+
+            Then replace every `checkPermission` call that passes a raw string literal with
+            a call that uses `authz.GetPermission`. The pattern is:
+
+            Old:
+            ```go
+            if err := s.checkPermission(ctx, "eventarc.triggers.get", req.GetName()); err != nil {
+            ```
+            New:
+            ```go
+            if err := s.checkPermission(ctx, authz.GetPermission("GetTrigger").Permission, req.GetName()); err != nil {
+            ```
+
+            The mapping from RPC method to authz key is direct — the authz key matches the
+            gRPC method name without package prefix. All ~40 checkPermission callsites use
+            permission strings that are defined in `authz.permissionMap`. The mapping is:
+            - "eventarc.triggers.get"                   → authz.GetPermission("GetTrigger").Permission
+            - "eventarc.triggers.list"                  → authz.GetPermission("ListTriggers").Permission
+            - "eventarc.triggers.create"                → authz.GetPermission("CreateTrigger").Permission
+            - "eventarc.triggers.update"                → authz.GetPermission("UpdateTrigger").Permission
+            - "eventarc.triggers.delete"                → authz.GetPermission("DeleteTrigger").Permission
+            - "eventarc.providers.get"                  → authz.GetPermission("GetProvider").Permission
+            - "eventarc.providers.list"                 → authz.GetPermission("ListProviders").Permission
+            - "eventarc.channels.get"                   → authz.GetPermission("GetChannel").Permission
+            - "eventarc.channels.list"                  → authz.GetPermission("ListChannels").Permission
+            - "eventarc.channels.create"                → authz.GetPermission("CreateChannel").Permission
+            - "eventarc.channels.update"                → authz.GetPermission("UpdateChannel").Permission
+            - "eventarc.channels.delete"                → authz.GetPermission("DeleteChannel").Permission
+            - "eventarc.channelConnections.get"         → authz.GetPermission("GetChannelConnection").Permission
+            - "eventarc.channelConnections.list"        → authz.GetPermission("ListChannelConnections").Permission
+            - "eventarc.channelConnections.create"      → authz.GetPermission("CreateChannelConnection").Permission
+            - "eventarc.channelConnections.delete"      → authz.GetPermission("DeleteChannelConnection").Permission
+            - "eventarc.googleChannelConfigs.get"       → authz.GetPermission("GetGoogleChannelConfig").Permission
+            - "eventarc.googleChannelConfigs.update"    → authz.GetPermission("UpdateGoogleChannelConfig").Permission
+            - "eventarc.messageBuses.get"               → authz.GetPermission("GetMessageBus").Permission
+            - "eventarc.messageBuses.list"              → authz.GetPermission("ListMessageBuses").Permission
+            - "eventarc.messageBuses.list" (ListMessageBusEnrollments) → authz.GetPermission("ListMessageBusEnrollments").Permission
+            - "eventarc.messageBuses.create"            → authz.GetPermission("CreateMessageBus").Permission
+            - "eventarc.messageBuses.update"            → authz.GetPermission("UpdateMessageBus").Permission
+            - "eventarc.messageBuses.delete"            → authz.GetPermission("DeleteMessageBus").Permission
+            - "eventarc.enrollments.get"                → authz.GetPermission("GetEnrollment").Permission
+            - "eventarc.enrollments.list"               → authz.GetPermission("ListEnrollments").Permission
+            - "eventarc.enrollments.create"             → authz.GetPermission("CreateEnrollment").Permission
+            - "eventarc.enrollments.update"             → authz.GetPermission("UpdateEnrollment").Permission
+            - "eventarc.enrollments.delete"             → authz.GetPermission("DeleteEnrollment").Permission
+            - "eventarc.pipelines.get"                  → authz.GetPermission("GetPipeline").Permission
+            - "eventarc.pipelines.list"                 → authz.GetPermission("ListPipelines").Permission
+            - "eventarc.pipelines.create"               → authz.GetPermission("CreatePipeline").Permission
+            - "eventarc.pipelines.update"               → authz.GetPermission("UpdatePipeline").Permission
+            - "eventarc.pipelines.delete"               → authz.GetPermission("DeletePipeline").Permission
+            - "eventarc.googleApiSources.get"           → authz.GetPermission("GetGoogleApiSource").Permission
+            - "eventarc.googleApiSources.list"          → authz.GetPermission("ListGoogleApiSources").Permission
+            - "eventarc.googleApiSources.create"        → authz.GetPermission("CreateGoogleApiSource").Permission
+            - "eventarc.googleApiSources.update"        → authz.GetPermission("UpdateGoogleApiSource").Permission
+            - "eventarc.googleApiSources.delete"        → authz.GetPermission("DeleteGoogleApiSource").Permission
+
+            Note: `authz.GetPermission` returns `(PermissionCheck, bool)`. Since all keys
+            above are statically known to be in the map, you may call it as:
+            ```go
+            perm, _ := authz.GetPermission("GetTrigger")
+            // then use perm.Permission
+            ```
+            Or inline: `func() string { p, _ := authz.GetPermission("GetTrigger"); return p.Permission }()`
+
+            A cleaner approach: define a small unexported helper at the top of server.go:
+            ```go
+            // perm returns the IAM permission string for the named Eventarc operation.
+            // It panics if the operation is not registered in the authz package, which
+            // indicates a programming error (missing permission constant).
+            func perm(operation string) string {
+                p, ok := authz.GetPermission(operation)
+                if !ok {
+                    panic("authz: unknown operation: " + operation)
+                }
+                return p.Permission
+            }
+            ```
+            Then all callsites become:
+            ```go
+            if err := s.checkPermission(ctx, perm("GetTrigger"), req.GetName()); err != nil {
+            ```
+            This is the recommended approach — clean, verifiable, fails fast on typos.
+
+            ### Verification Gate
+            ```
+            go build ./internal/server/...
+            go vet ./internal/server/...
+            go test ./internal/server/...
+            ```
+
+            ### Constraints
+            - Do NOT touch any storage*.go files — those belong to Agent A.
+            - The `requireField` function must be unexported (lowercase r).
+            - The `perm` helper must be unexported (lowercase p).
+            - Do not change any existing function signatures.
+            - The `ListMessageBusEnrollments` checkPermission currently uses
+              `"eventarc.messageBuses.list"` as the raw string. Look up the correct
+              authz key — it is `"ListMessageBusEnrollments"` which maps to
+              `"eventarc.messageBuses.listEnrollments"`. Verify by reading
+              internal/authz/permissions.go before replacing.
+          files: []
+        - id: C
+          task: |
+            ## Agent C — Logger OrDefault Helper (Task 5)
+
+            ### Context
+            Three packages each guard against nil logger with the same inline pattern.
+            The fix requires adding one helper to the logger package, then updating
+            the three consumer packages to use it.
+
+            ### Step 1: Add `OrDefault` to `internal/logger/logger.go`
+
+            Add the following exported function to `internal/logger/logger.go`, at the
+            end of the file after the `Error` method:
+
+            ```go
+            // OrDefault returns lgr if it is non-nil, or a new Logger at info level.
+            // Use this to consolidate the nil-logger guard pattern at package boundaries.
+            func OrDefault(lgr *Logger) *Logger {
+                if lgr != nil {
+                    return lgr
+                }
+                return New("info")
+            }
+            ```
+
+            No other changes to logger.go are needed.
+
+            ### Step 2: Update `internal/router/router.go`
+
+            Find `NewRouter`:
+            ```go
+            func NewRouter(storage StorageReader, log ...*logger.Logger) *Router {
+                r := &Router{storage: storage}
+                if len(log) > 0 && log[0] != nil {
+                    r.logger = log[0]
+                } else {
+                    r.logger = logger.New("info")
+                }
+                return r
+            }
+            ```
+
+            Replace the nil-guard block with `logger.OrDefault`:
+            ```go
+            func NewRouter(storage StorageReader, log ...*logger.Logger) *Router {
+                var lgr *logger.Logger
+                if len(log) > 0 {
+                    lgr = log[0]
+                }
+                return &Router{storage: storage, logger: logger.OrDefault(lgr)}
+            }
+            ```
+
+            No other changes to router.go are needed.
+
+            ### Step 3: Update `internal/dispatcher/http.go`
+
+            Find `NewDispatcher`:
+            ```go
+            func NewDispatcher(client *http.Client, log ...*logger.Logger) *Dispatcher {
+                if client == nil {
+                    client = &http.Client{Timeout: defaultTimeout}
+                }
+                d := &Dispatcher{client: client}
+                if len(log) > 0 && log[0] != nil {
+                    d.logger = log[0]
+                } else {
+                    d.logger = logger.New("info")
+                }
+                return d
+            }
+            ```
+
+            Replace the nil-guard block:
+            ```go
+            func NewDispatcher(client *http.Client, log ...*logger.Logger) *Dispatcher {
+                if client == nil {
+                    client = &http.Client{Timeout: defaultTimeout}
+                }
+                var lgr *logger.Logger
+                if len(log) > 0 {
+                    lgr = log[0]
+                }
+                return &Dispatcher{client: client, logger: logger.OrDefault(lgr)}
+            }
+            ```
+
+            No other changes to http.go are needed.
+
+            ### Step 4: Update `internal/publisher/server.go`
+
+            Find `NewServer`:
+            ```go
+            func NewServer(router RouterMatcher, dispatcher EventDispatcher, channels ChannelChecker, log ...*logger.Logger) *Server {
+                s := &Server{
+                    router:     router,
+                    dispatcher: dispatcher,
+                    channels:   channels,
+                }
+                if len(log) > 0 && log[0] != nil {
+                    s.logger = log[0]
+                } else {
+                    s.logger = logger.New("info")
+                }
+                return s
+            }
+            ```
+
+            Replace the nil-guard block:
+            ```go
+            func NewServer(router RouterMatcher, dispatcher EventDispatcher, channels ChannelChecker, log ...*logger.Logger) *Server {
+                var lgr *logger.Logger
+                if len(log) > 0 {
+                    lgr = log[0]
+                }
+                return &Server{
+                    router:     router,
+                    dispatcher: dispatcher,
+                    channels:   channels,
+                    logger:     logger.OrDefault(lgr),
+                }
+            }
+            ```
+
+            No other changes to server.go are needed.
+
+            ### Verification Gate
+            ```
+            go build ./internal/logger/... ./internal/router/... ./internal/dispatcher/... ./internal/publisher/...
+            go vet ./internal/logger/... ./internal/router/... ./internal/dispatcher/... ./internal/publisher/...
+            go test ./internal/logger/... ./internal/router/... ./internal/dispatcher/... ./internal/publisher/...
+            ```
+
+            ### Constraints
+            - Do NOT touch internal/server/server.go — that is Agent B's file.
+            - The function must be exported (capital O) and added to the logger package.
+            - Function signature must exactly match: `func OrDefault(lgr *Logger) *Logger`
+            - Do not change any public function signatures in the three consumer packages.
+            - Do not add new tests (that is out of scope for this task).
+          files: []
+        - id: D
+          task: |
+            ## Agent D — Startup Log Standardization and Ready Ordering (Tasks 6, 7)
+
+            ### Context
+            Three cmd mains mix stdlib `log.Printf` for banner output with the leveled
+            `lgr.Info` logger. The "Ready" log fires before the server actually listens
+            in two of the three mains. Fix all three files.
+
+            ### `cmd/server/main.go` — Tasks 6 and 7
+
+            **Task 6 — Replace startup `log.Printf` with `lgr.Info`:**
+
+            Line 105 currently reads:
+            ```go
+            log.Printf("GCP Eventarc Emulator v%s", version)
+            ```
+            Replace with:
+            ```go
+            lgr.Info("GCP Eventarc Emulator v%s", version)
+            ```
+
+            **Task 7 — Move "Ready" log after listener confirms serving:**
+
+            Currently the "Ready" log fires before `grpcServer.Serve(lis)` is called
+            (lines 139-141). The model is `cmd/server-dual/main.go` which uses a
+            `readyCh` channel.
+
+            Apply the readyCh pattern:
+
+            1. After `grpcServer := server.NewGRPCServer(...)` (around line 137),
+               add:
+               ```go
+               readyCh := make(chan struct{})
+               ```
+
+            2. Replace the existing goroutine block:
+               ```go
+               go func() {
+                   if err := grpcServer.Serve(lis); err != nil {
+                       log.Fatalf("Failed to serve: %v", err)
+                   }
+               }()
+               ```
+               With:
+               ```go
+               go func() {
+                   lgr.Info("gRPC server listening at %v", lis.Addr())
+                   close(readyCh)
+                   if err := grpcServer.Serve(lis); err != nil {
+                       log.Fatalf("Failed to serve: %v", err)
+                   }
+               }()
+               ```
+
+            3. Remove the two "Ready" log lines that currently appear before the goroutine:
+               ```go
+               lgr.Info("Server listening at %v", lis.Addr())
+               lgr.Info("Ready to accept connections")
+               ```
+
+            4. After the goroutine, add:
+               ```go
+               <-readyCh
+               lgr.Info("Ready to accept gRPC connections")
+               lgr.Info("gRPC: localhost:%d", listenPort)
+               ```
+
+            5. Remove the `lgr.Info("Publisher service registered")` line that
+               currently appears after the goroutine (line 149) — it is redundant
+               and fires at an odd time relative to readiness.
+
+            ### `cmd/server-rest/main.go` — Tasks 6 and 7
+
+            **Task 6 — Replace startup `log.Printf` with `lgr.Info`:**
+
+            Line 95 currently reads:
+            ```go
+            log.Printf("GCP Eventarc Emulator v%s (REST)", version)
+            ```
+            Replace with:
+            ```go
+            lgr.Info("GCP Eventarc Emulator v%s (REST)", version)
+            ```
+
+            **Task 7 — Move "Ready" log after listener confirms serving:**
+
+            Currently "Ready" is logged inside the HTTP gateway goroutine before
+            `gw.Start` returns (lines 150-152):
+            ```go
+            go func() {
+                lgr.Info("HTTP gateway listening at %s", httpAddr)
+                lgr.Info("Ready to accept REST requests")
+                if err := gw.Start(httpAddr); err != nil {
+                    log.Fatalf("Failed to serve HTTP: %v", err)
+                }
+            }()
+            ```
+
+            The gRPC goroutine also logs its address inside the goroutine (line 133).
+            Apply readyCh for gRPC, keep HTTP goroutine log for now but move "Ready"
+            to after readyCh (gRPC confirmed up):
+
+            1. Before the gRPC goroutine, add:
+               ```go
+               grpcReadyCh := make(chan struct{})
+               ```
+
+            2. Replace the gRPC goroutine:
+               ```go
+               go func() {
+                   lgr.Info("gRPC backend listening at %v (internal)", lis.Addr())
+                   if err := grpcSrv.Serve(lis); err != nil {
+                       log.Fatalf("Failed to serve gRPC: %v", err)
+                   }
+               }()
+               ```
+               With:
+               ```go
+               go func() {
+                   lgr.Info("gRPC backend listening at %v (internal)", lis.Addr())
+                   close(grpcReadyCh)
+                   if err := grpcSrv.Serve(lis); err != nil {
+                       log.Fatalf("Failed to serve gRPC: %v", err)
+                   }
+               }()
+               ```
+
+            3. Remove the "Ready" line from inside the HTTP goroutine:
+               ```go
+               lgr.Info("Ready to accept REST requests")
+               ```
+               Leave the `lgr.Info("HTTP gateway listening at %s", httpAddr)` line in
+               the goroutine (it fires when the goroutine starts, which is fine for
+               a startup message).
+
+            4. After both goroutines, add:
+               ```go
+               <-grpcReadyCh
+               lgr.Info("Ready to accept REST requests")
+               lgr.Info("REST: http://localhost:%d/v1/projects/my-project/locations/us-central1/triggers", *httpPort)
+               ```
+
+            ### `cmd/server-dual/main.go` — Task 6 only
+
+            **Task 6 — Replace startup `log.Printf` with `lgr.Info`:**
+
+            Line 95 currently reads:
+            ```go
+            log.Printf("GCP Eventarc Emulator v%s (gRPC + REST)", version)
+            ```
+            Replace with:
+            ```go
+            lgr.Info("GCP Eventarc Emulator v%s (gRPC + REST)", version)
+            ```
+
+            Task 7 is already correctly implemented in server-dual (it already uses
+            readyCh at lines 131-161). No further changes needed.
+
+            ### Verification Gate
+            ```
+            go build ./cmd/...
+            go vet ./cmd/...
+            ```
+            There are no unit tests for the cmd packages; build and vet are the
+            appropriate gates.
+
+            ### Constraints
+            - Keep ALL `log.Fatalf` calls unchanged — fatal errors must always print
+              regardless of log level. Only replace `log.Printf` / `log.Println`
+              startup banners with `lgr.Info` or `lgr.Warn` as appropriate.
+            - Do not change `log.Println("Shutting down...")` and
+              `log.Println("Server stopped")` at shutdown — these are low-frequency
+              operational messages; leaving them as stdlib log is acceptable.
+              If you want to convert them, use `lgr.Info` consistently.
+            - The `lgr` variable is created after flag parsing in all three mains;
+              do not add any `lgr.Info` calls before `lgr := logger.New(*logLevel)`.
+            - Do not remove or reorder any functional code (listener creation, server
+              creation, routing setup). Only modify log call sites and add readyCh.
+          files: []
+        - id: E
+          task: |
+            ## Agent E — Dead Code Removal (Task 9)
+
+            ### Context
+            Your two files are `internal/authz/permissions.go` and
+            `internal/authz/permissions_test.go`.
+
+            `NormalizeTriggerResource` is dead production code — it is only referenced
+            from its own test (`TestNormalizeTriggerResource` in permissions_test.go).
+            Remove both the function and its test.
+
+            ### Step 1 — Confirm callers
+            Run:
+            ```
+            grep -rn "NormalizeTriggerResource" . --include="*.go"
+            ```
+            Expected: exactly two hits — one in `permissions.go` (definition) and one
+            in `permissions_test.go` (the test function). If any third file appears,
+            STOP and report — do not proceed.
+
+            ### Step 2 — Remove from `internal/authz/permissions.go`
+            Delete the following block:
+            ```go
+            // NormalizeTriggerResource returns the trigger resource name for IAM checks.
+            // The name is returned as-is; this function is a hook for any future normalization.
+            func NormalizeTriggerResource(name string) string {
+                return name
+            }
+            ```
+
+            The `strings` import is used by `NormalizeParentForCreate` — do NOT
+            remove it.
+
+            After removal, the file should contain only:
+            - `package authz` declaration
+            - `import "strings"`
+            - `PermissionCheck` struct
+            - `permissionMap` variable
+            - `GetPermission` function
+            - `NormalizeParentForCreate` function
+
+            ### Step 3 — Remove from `internal/authz/permissions_test.go`
+            Delete the `TestNormalizeTriggerResource` test function (and its table
+            entries). Do not modify any other test in the file.
+
+            ### Verification Gate
+            ```
+            go build ./internal/authz/...
+            go vet ./internal/authz/...
+            go test ./internal/authz/...
+            grep -rn "NormalizeTriggerResource" . --include="*.go"
+            ```
+            The grep must produce no output.
+
+            ### Constraints
+            - Do not add any new functions, constants, or types.
+            - Do not modify `NormalizeParentForCreate` or any other existing function.
+            - Do not remove any test other than `TestNormalizeTriggerResource`.
+          files:
+            - internal/authz/permissions_test.go
+quality_gates:
+    level: standard
+    gates:
+        - type: build
+          command: go build ./...
+          required: true
+        - type: lint
+          command: go vet ./...
+          required: true
+        - type: test
+          command: go test ./...
+          required: true
+pre_mortem:
+    overall_risk: low
+    rows:
+        - scenario: |
+            cloneProto generic panics on nil proto.Message input. The current per-type
+            wrappers all check `if x == nil { return nil }` before calling proto.Clone.
+            The generic version `proto.Clone(m).(T)` with a nil m may panic on the
+            type assertion if proto.Clone returns a typed nil.
+          likelihood: medium
+          impact: high
+          mitigation: |
+            Agent A must test nil-safety of cloneProto before removing the per-type
+            wrappers. If `proto.Clone(nil proto.Message).(T)` panics, add a reflect-based
+            nil check: use a concrete nil pointer test via `reflect.ValueOf(m).IsNil()`.
+            Alternatively, add a typed nil check using a zero-value comparison. The
+            brief explicitly warns Agent A to test this.
+        - scenario: |
+            PaginatePage changes pagination error behavior. The current ListTriggers and
+            ListProviders implementations silently ignore invalid pageTokens (they use
+            `if n, err := strconv.Atoi(pageToken); err == nil` and fall through on error).
+            PaginatePage returns an InvalidArgument error on bad tokens. This is a
+            behavior change that could affect clients sending invalid page tokens.
+          likelihood: low
+          impact: medium
+          mitigation: |
+            This is an intentional improvement aligned with the GCP API spec. Tests that
+            pass invalid tokens and expect empty results rather than errors would break.
+            Review existing tests in internal/server/*_test.go for pagination with bad
+            tokens before merging Agent A's changes. The test files are not in Agent A's
+            ownership; human review of existing test behavior is needed post-merge.
+        - scenario: |
+            ListMessageBusEnrollments uses `[]string` not `[]proto.Message`. PaginatePage
+            is generic over `any` so it works for strings, but Agent A must use the
+            correct type instantiation. If Agent A accidentally wraps proto-specific
+            logic inside PaginatePage, the string use case will break.
+          likelihood: low
+          impact: medium
+          mitigation: |
+            PaginatePage is defined as `[T any]` with no proto constraint, making it safe
+            for `[]string`. Agent A's brief explicitly calls this out. Post-merge build
+            will catch any type errors.
+        - scenario: |
+            authz.GetPermission returns (PermissionCheck, bool). If Agent B uses the
+            panic-based `perm()` helper and a key is misspelled, it panics at runtime
+            rather than compile time.
+          likelihood: low
+          impact: high
+          mitigation: |
+            Agent B's brief includes the full mapping table of raw string to authz key.
+            The panic-based perm() helper surfaces typos in tests before production.
+            Add a test that calls perm() for every RPC method if time permits. The
+            authz_test.go already tests the map; Agent B should verify each key exists.
+        - scenario: |
+            cmd/server-dual/main.go already has log.Printf on line 95. Agent D replaces
+            it. However, server-dual's readyCh implementation at lines 131-161 is already
+            correct. If Agent D accidentally modifies the readyCh section thinking it is
+            broken, it could introduce a regression.
+          likelihood: low
+          impact: medium
+          mitigation: |
+            Agent D's brief explicitly states that Task 7 is already done in server-dual
+            and only Task 6 (the log.Printf replacement) is needed there. The brief
+            says "No further changes needed" after describing the Task 7 work. The go
+            build gate will catch any compilation errors.
+        - scenario: |
+            NormalizeTriggerResource may have callers in test files or in code not
+            indexed by grep. Agent E's brief requires running grep first and aborting
+            if any callers are found.
+          likelihood: low
+          impact: low
+          mitigation: |
+            The pre-removal grep check in Agent E's brief is mandatory. Scout already
+            ran the check and found no callers, but Agent E re-verifies at execution time
+            as a double-check. If callers appear (e.g., from a test file added between
+            scout and execution), the agent aborts without modifying the file.
+critic_report:
+    verdict: PASS
+    agent_reviews:
+        A:
+            agent_id: A
+            verdict: PASS
+        B:
+            agent_id: B
+            verdict: PASS
+        C:
+            agent_id: C
+            verdict: PASS
+        D:
+            agent_id: D
+            verdict: PASS
+        E:
+            agent_id: E
+            verdict: PASS
+    summary: 'All five agents verified. Agent E brief corrected post-critic: permissions_test.go added to file ownership; brief updated to instruct removal of TestNormalizeTriggerResource alongside the function. All other agents (A: storage helpers, B: server validation and IAM constants, C: logger OrDefault, D: startup log standardization) had accurate briefs verified against the codebase.'
+    reviewed_at: "2026-04-03T04:05:00Z"
+    issue_count: 0
+state: SCOUT_PENDING
+injection_method: hook
