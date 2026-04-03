@@ -103,7 +103,7 @@ func TestStorageListChannels_Pagination(t *testing.T) {
 	}
 
 	// Page 1: first 2.
-	page1, nextToken, err := s.ListChannels(ctx, testParent, 2, "")
+	page1, nextToken, err := s.ListChannels(ctx, testParent, 2, "", "")
 	if err != nil {
 		t.Fatalf("ListChannels page1: %v", err)
 	}
@@ -115,7 +115,7 @@ func TestStorageListChannels_Pagination(t *testing.T) {
 	}
 
 	// Page 2: next 2.
-	page2, nextToken2, err := s.ListChannels(ctx, testParent, 2, nextToken)
+	page2, nextToken2, err := s.ListChannels(ctx, testParent, 2, nextToken, "")
 	if err != nil {
 		t.Fatalf("ListChannels page2: %v", err)
 	}
@@ -127,7 +127,7 @@ func TestStorageListChannels_Pagination(t *testing.T) {
 	}
 
 	// Page 3: last 1.
-	page3, nextToken3, err := s.ListChannels(ctx, testParent, 2, nextToken2)
+	page3, nextToken3, err := s.ListChannels(ctx, testParent, 2, nextToken2, "")
 	if err != nil {
 		t.Fatalf("ListChannels page3: %v", err)
 	}

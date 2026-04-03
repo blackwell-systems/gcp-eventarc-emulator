@@ -136,7 +136,7 @@ func (s *Storage) DeletePipeline(ctx context.Context, name string) error {
 
 // ListPipelines returns pipelines under the given parent with integer-offset
 // pagination. Results are sorted by name.
-func (s *Storage) ListPipelines(ctx context.Context, parent string, pageSize int32, pageToken string) ([]*eventarcpb.Pipeline, string, error) {
+func (s *Storage) ListPipelines(ctx context.Context, parent string, pageSize int32, pageToken string, orderBy string) ([]*eventarcpb.Pipeline, string, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -148,9 +148,16 @@ func (s *Storage) ListPipelines(ctx context.Context, parent string, pageSize int
 		}
 	}
 
-	sort.Slice(all, func(i, j int) bool {
-		return all[i].GetName() < all[j].GetName()
-	})
+	switch strings.TrimSpace(strings.ToLower(orderBy)) {
+	case "create_time desc":
+		sort.Slice(all, func(i, j int) bool {
+			return all[i].GetCreateTime().AsTime().After(all[j].GetCreateTime().AsTime())
+		})
+	default:
+		sort.Slice(all, func(i, j int) bool {
+			return all[i].GetName() < all[j].GetName()
+		})
+	}
 
 	page, nextToken, err := PaginatePage(all, pageToken, pageSize)
 	if err != nil {
@@ -270,7 +277,7 @@ func (s *Storage) DeleteGoogleApiSource(ctx context.Context, name string) error 
 
 // ListGoogleApiSources returns sources under the given parent with
 // integer-offset pagination. Results are sorted by name.
-func (s *Storage) ListGoogleApiSources(ctx context.Context, parent string, pageSize int32, pageToken string) ([]*eventarcpb.GoogleApiSource, string, error) {
+func (s *Storage) ListGoogleApiSources(ctx context.Context, parent string, pageSize int32, pageToken string, orderBy string) ([]*eventarcpb.GoogleApiSource, string, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -282,9 +289,16 @@ func (s *Storage) ListGoogleApiSources(ctx context.Context, parent string, pageS
 		}
 	}
 
-	sort.Slice(all, func(i, j int) bool {
-		return all[i].GetName() < all[j].GetName()
-	})
+	switch strings.TrimSpace(strings.ToLower(orderBy)) {
+	case "create_time desc":
+		sort.Slice(all, func(i, j int) bool {
+			return all[i].GetCreateTime().AsTime().After(all[j].GetCreateTime().AsTime())
+		})
+	default:
+		sort.Slice(all, func(i, j int) bool {
+			return all[i].GetName() < all[j].GetName()
+		})
+	}
 
 	page, nextToken, err := PaginatePage(all, pageToken, pageSize)
 	if err != nil {

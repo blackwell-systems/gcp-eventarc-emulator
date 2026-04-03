@@ -89,6 +89,10 @@ func (s *Storage) UpdateChannel(ctx context.Context, ch *eventarcpb.Channel, mas
 				stored.CryptoKeyName = ch.GetCryptoKeyName()
 			case "state":
 				stored.State = ch.GetState()
+			case "*":
+				stored.Labels = ch.GetLabels()
+				stored.CryptoKeyName = ch.GetCryptoKeyName()
+				stored.State = ch.GetState()
 			}
 		}
 	} else {
@@ -115,7 +119,7 @@ func (s *Storage) DeleteChannel(ctx context.Context, name string) error {
 }
 
 // ListChannels returns channels under the given parent with integer-offset pagination.
-func (s *Storage) ListChannels(ctx context.Context, parent string, pageSize int32, pageToken string) ([]*eventarcpb.Channel, string, error) {
+func (s *Storage) ListChannels(ctx context.Context, parent string, pageSize int32, pageToken string, orderBy string) ([]*eventarcpb.Channel, string, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -127,9 +131,16 @@ func (s *Storage) ListChannels(ctx context.Context, parent string, pageSize int3
 		}
 	}
 
-	sort.Slice(all, func(i, j int) bool {
-		return all[i].GetName() < all[j].GetName()
-	})
+	switch strings.TrimSpace(strings.ToLower(orderBy)) {
+	case "create_time desc":
+		sort.Slice(all, func(i, j int) bool {
+			return all[i].GetCreateTime().AsTime().After(all[j].GetCreateTime().AsTime())
+		})
+	default:
+		sort.Slice(all, func(i, j int) bool {
+			return all[i].GetName() < all[j].GetName()
+		})
+	}
 
 	page, nextToken, err := PaginatePage(all, pageToken, pageSize)
 	if err != nil {

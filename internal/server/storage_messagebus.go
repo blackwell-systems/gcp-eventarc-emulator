@@ -121,7 +121,7 @@ func (s *Storage) DeleteMessageBus(ctx context.Context, name string) error {
 
 // ListMessageBuses returns message buses under the given parent with
 // integer-offset pagination. Results are sorted by name.
-func (s *Storage) ListMessageBuses(ctx context.Context, parent string, pageSize int32, pageToken string) ([]*eventarcpb.MessageBus, string, error) {
+func (s *Storage) ListMessageBuses(ctx context.Context, parent string, pageSize int32, pageToken string, orderBy string) ([]*eventarcpb.MessageBus, string, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -133,9 +133,16 @@ func (s *Storage) ListMessageBuses(ctx context.Context, parent string, pageSize 
 		}
 	}
 
-	sort.Slice(all, func(i, j int) bool {
-		return all[i].GetName() < all[j].GetName()
-	})
+	switch strings.TrimSpace(strings.ToLower(orderBy)) {
+	case "create_time desc":
+		sort.Slice(all, func(i, j int) bool {
+			return all[i].GetCreateTime().AsTime().After(all[j].GetCreateTime().AsTime())
+		})
+	default:
+		sort.Slice(all, func(i, j int) bool {
+			return all[i].GetName() < all[j].GetName()
+		})
+	}
 
 	page, nextToken, err := PaginatePage(all, pageToken, pageSize)
 	if err != nil {
@@ -279,7 +286,7 @@ func (s *Storage) DeleteEnrollment(ctx context.Context, name string) error {
 
 // ListEnrollments returns enrollments under the given parent with
 // integer-offset pagination. Results are sorted by name.
-func (s *Storage) ListEnrollments(ctx context.Context, parent string, pageSize int32, pageToken string) ([]*eventarcpb.Enrollment, string, error) {
+func (s *Storage) ListEnrollments(ctx context.Context, parent string, pageSize int32, pageToken string, orderBy string) ([]*eventarcpb.Enrollment, string, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -291,9 +298,16 @@ func (s *Storage) ListEnrollments(ctx context.Context, parent string, pageSize i
 		}
 	}
 
-	sort.Slice(all, func(i, j int) bool {
-		return all[i].GetName() < all[j].GetName()
-	})
+	switch strings.TrimSpace(strings.ToLower(orderBy)) {
+	case "create_time desc":
+		sort.Slice(all, func(i, j int) bool {
+			return all[i].GetCreateTime().AsTime().After(all[j].GetCreateTime().AsTime())
+		})
+	default:
+		sort.Slice(all, func(i, j int) bool {
+			return all[i].GetName() < all[j].GetName()
+		})
+	}
 
 	page, nextToken, err := PaginatePage(all, pageToken, pageSize)
 	if err != nil {

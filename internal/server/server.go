@@ -244,6 +244,8 @@ func (s *Server) CreateTrigger(ctx context.Context, req *eventarcpb.CreateTrigge
 	}
 	if req.GetTriggerId() == "" {
 		violations = append(violations, &errdetails.BadRequest_FieldViolation{Field: "triggerId", Description: "triggerId is required"})
+	} else if err := validateResourceID(req.GetTriggerId(), "trigger_id"); err != nil {
+		violations = append(violations, &errdetails.BadRequest_FieldViolation{Field: "triggerId", Description: err.Error()})
 	}
 	if req.GetTrigger() == nil {
 		violations = append(violations, &errdetails.BadRequest_FieldViolation{Field: "trigger", Description: "trigger is required"})
@@ -426,7 +428,7 @@ func (s *Server) ListChannels(ctx context.Context, req *eventarcpb.ListChannelsR
 	if err := s.checkPermission(ctx, perm("ListChannels"), req.GetParent()); err != nil {
 		return nil, err
 	}
-	channels, nextToken, err := s.storage.ListChannels(ctx, req.GetParent(), req.GetPageSize(), req.GetPageToken())
+	channels, nextToken, err := s.storage.ListChannels(ctx, req.GetParent(), req.GetPageSize(), req.GetPageToken(), req.GetOrderBy())
 	if err != nil {
 		return nil, err
 	}
@@ -442,6 +444,9 @@ func (s *Server) CreateChannel(ctx context.Context, req *eventarcpb.CreateChanne
 		return nil, err
 	}
 	if err := requireField(req.GetChannelId(), "channel_id"); err != nil {
+		return nil, err
+	}
+	if err := validateResourceID(req.GetChannelId(), "channel_id"); err != nil {
 		return nil, err
 	}
 	if req.GetChannel() == nil {
@@ -552,6 +557,9 @@ func (s *Server) CreateChannelConnection(ctx context.Context, req *eventarcpb.Cr
 	if err := requireField(req.GetChannelConnectionId(), "channel_connection_id"); err != nil {
 		return nil, err
 	}
+	if err := validateResourceID(req.GetChannelConnectionId(), "channel_connection_id"); err != nil {
+		return nil, err
+	}
 	if req.GetChannelConnection() == nil {
 		return nil, status.Error(codes.InvalidArgument, "channel_connection is required")
 	}
@@ -636,7 +644,7 @@ func (s *Server) ListMessageBuses(ctx context.Context, req *eventarcpb.ListMessa
 	if err := s.checkPermission(ctx, perm("ListMessageBuses"), req.GetParent()); err != nil {
 		return nil, err
 	}
-	buses, nextToken, err := s.storage.ListMessageBuses(ctx, req.GetParent(), req.GetPageSize(), req.GetPageToken())
+	buses, nextToken, err := s.storage.ListMessageBuses(ctx, req.GetParent(), req.GetPageSize(), req.GetPageToken(), req.GetOrderBy())
 	if err != nil {
 		return nil, err
 	}
@@ -670,6 +678,9 @@ func (s *Server) CreateMessageBus(ctx context.Context, req *eventarcpb.CreateMes
 		return nil, err
 	}
 	if err := requireField(req.GetMessageBusId(), "message_bus_id"); err != nil {
+		return nil, err
+	}
+	if err := validateResourceID(req.GetMessageBusId(), "message_bus_id"); err != nil {
 		return nil, err
 	}
 	if req.GetMessageBus() == nil {
@@ -780,7 +791,7 @@ func (s *Server) ListEnrollments(ctx context.Context, req *eventarcpb.ListEnroll
 	if err := s.checkPermission(ctx, perm("ListEnrollments"), req.GetParent()); err != nil {
 		return nil, err
 	}
-	enrollments, nextToken, err := s.storage.ListEnrollments(ctx, req.GetParent(), req.GetPageSize(), req.GetPageToken())
+	enrollments, nextToken, err := s.storage.ListEnrollments(ctx, req.GetParent(), req.GetPageSize(), req.GetPageToken(), req.GetOrderBy())
 	if err != nil {
 		return nil, err
 	}
@@ -796,6 +807,9 @@ func (s *Server) CreateEnrollment(ctx context.Context, req *eventarcpb.CreateEnr
 		return nil, err
 	}
 	if err := requireField(req.GetEnrollmentId(), "enrollment_id"); err != nil {
+		return nil, err
+	}
+	if err := validateResourceID(req.GetEnrollmentId(), "enrollment_id"); err != nil {
 		return nil, err
 	}
 	if req.GetEnrollment() == nil {
@@ -909,7 +923,7 @@ func (s *Server) ListPipelines(ctx context.Context, req *eventarcpb.ListPipeline
 	if err := s.checkPermission(ctx, perm("ListPipelines"), req.GetParent()); err != nil {
 		return nil, err
 	}
-	pipelines, nextToken, err := s.storage.ListPipelines(ctx, req.GetParent(), req.GetPageSize(), req.GetPageToken())
+	pipelines, nextToken, err := s.storage.ListPipelines(ctx, req.GetParent(), req.GetPageSize(), req.GetPageToken(), req.GetOrderBy())
 	if err != nil {
 		return nil, err
 	}
@@ -925,6 +939,9 @@ func (s *Server) CreatePipeline(ctx context.Context, req *eventarcpb.CreatePipel
 		return nil, err
 	}
 	if err := requireField(req.GetPipelineId(), "pipeline_id"); err != nil {
+		return nil, err
+	}
+	if err := validateResourceID(req.GetPipelineId(), "pipeline_id"); err != nil {
 		return nil, err
 	}
 	if req.GetPipeline() == nil {
@@ -1038,7 +1055,7 @@ func (s *Server) ListGoogleApiSources(ctx context.Context, req *eventarcpb.ListG
 	if err := s.checkPermission(ctx, perm("ListGoogleApiSources"), req.GetParent()); err != nil {
 		return nil, err
 	}
-	sources, nextToken, err := s.storage.ListGoogleApiSources(ctx, req.GetParent(), req.GetPageSize(), req.GetPageToken())
+	sources, nextToken, err := s.storage.ListGoogleApiSources(ctx, req.GetParent(), req.GetPageSize(), req.GetPageToken(), req.GetOrderBy())
 	if err != nil {
 		return nil, err
 	}
@@ -1054,6 +1071,9 @@ func (s *Server) CreateGoogleApiSource(ctx context.Context, req *eventarcpb.Crea
 		return nil, err
 	}
 	if err := requireField(req.GetGoogleApiSourceId(), "google_api_source_id"); err != nil {
+		return nil, err
+	}
+	if err := validateResourceID(req.GetGoogleApiSourceId(), "google_api_source_id"); err != nil {
 		return nil, err
 	}
 	if req.GetGoogleApiSource() == nil {

@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-04-03
+
+### Fixed
+- `UpdateChannel` now supports wildcard mask `"*"` to update all mutable fields
+- `Trigger.conditions` map now set to `{"Ready": {code: 0}}` on create and update
+- Resource ID format validated on all Create methods (`^[a-z]([a-z0-9-]{0,61}[a-z0-9])?$`)
+- `order_by` now respected on ListChannels, ListMessageBuses, ListEnrollments, ListPipelines, ListGoogleApiSources (supports `create_time desc`; default sorts by name)
+
 ## [0.2.0] - 2026-04-03
 
 ### Fixed

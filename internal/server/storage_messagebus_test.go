@@ -107,7 +107,7 @@ func TestStorageListMessageBuses_Pagination(t *testing.T) {
 	}
 
 	// Page 1: expect 2 results and a next token.
-	page1, nextToken, err := s.ListMessageBuses(ctx, parent, 2, "")
+	page1, nextToken, err := s.ListMessageBuses(ctx, parent, 2, "", "")
 	if err != nil {
 		t.Fatalf("ListMessageBuses page1: %v", err)
 	}
@@ -119,7 +119,7 @@ func TestStorageListMessageBuses_Pagination(t *testing.T) {
 	}
 
 	// Page 2: expect 2 results.
-	page2, nextToken2, err := s.ListMessageBuses(ctx, parent, 2, nextToken)
+	page2, nextToken2, err := s.ListMessageBuses(ctx, parent, 2, nextToken, "")
 	if err != nil {
 		t.Fatalf("ListMessageBuses page2: %v", err)
 	}
@@ -131,7 +131,7 @@ func TestStorageListMessageBuses_Pagination(t *testing.T) {
 	}
 
 	// Page 3: expect 1 result and empty next token.
-	page3, nextToken3, err := s.ListMessageBuses(ctx, parent, 2, nextToken2)
+	page3, nextToken3, err := s.ListMessageBuses(ctx, parent, 2, nextToken2, "")
 	if err != nil {
 		t.Fatalf("ListMessageBuses page3: %v", err)
 	}

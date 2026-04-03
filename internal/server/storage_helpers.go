@@ -4,12 +4,27 @@ import (
 	"fmt"
 	"math/rand"
 	"reflect"
+	"regexp"
 	"strconv"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 )
+
+// resourceIDRe matches valid GCP resource IDs: lowercase letter, then up to
+// 61 alphanumeric-or-hyphen chars, ending in alphanumeric.
+var resourceIDRe = regexp.MustCompile(`^[a-z]([a-z0-9\-]{0,61}[a-z0-9])?$`)
+
+// validateResourceID returns InvalidArgument if id does not match the
+// standard GCP resource ID format.
+func validateResourceID(id, field string) error {
+	if !resourceIDRe.MatchString(id) {
+		return status.Errorf(codes.InvalidArgument,
+			"%s must match ^[a-z]([a-z0-9-]{0,61}[a-z0-9])?$, got %q", field, id)
+	}
+	return nil
+}
 
 // PaginatePage slices items into a page using integer-offset tokens.
 // pageToken is an integer string offset; empty string means start from 0.

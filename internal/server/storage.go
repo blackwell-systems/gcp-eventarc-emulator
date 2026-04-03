@@ -143,6 +143,9 @@ func (s *Storage) CreateTrigger(ctx context.Context, parent, triggerID string, t
 	stored.CreateTime = now
 	stored.UpdateTime = now
 	stored.Etag = newEtag()
+	stored.Conditions = map[string]*eventarcpb.StateCondition{
+		"Ready": {Code: 0, Message: ""},
+	}
 
 	s.triggers[name] = stored
 	return cloneProto(stored), nil
@@ -206,6 +209,9 @@ func (s *Storage) UpdateTrigger(ctx context.Context, trigger *eventarcpb.Trigger
 
 	stored.UpdateTime = timestamppb.Now()
 	stored.Etag = newEtag()
+	stored.Conditions = map[string]*eventarcpb.StateCondition{
+		"Ready": {Code: 0, Message: ""},
+	}
 	return cloneProto(stored), nil
 }
 

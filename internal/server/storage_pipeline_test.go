@@ -121,7 +121,7 @@ func TestStorageListPipelines_Pagination(t *testing.T) {
 	token := ""
 	pages := 0
 	for {
-		results, next, err := s.ListPipelines(ctx, testParent, 2, token)
+		results, next, err := s.ListPipelines(ctx, testParent, 2, token, "")
 		if err != nil {
 			t.Fatalf("ListPipelines: %v", err)
 		}
