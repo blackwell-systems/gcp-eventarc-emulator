@@ -61,10 +61,14 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Usage: server-dual [flags]\n\nFlags:\n")
 		flag.PrintDefaults()
 		fmt.Fprintf(os.Stderr, "\nEnvironment Variables:\n")
-		fmt.Fprintf(os.Stderr, "  EVENTARC_EMULATOR_HOST  gRPC host:port for clients (e.g. localhost:9085)\n")
-		fmt.Fprintf(os.Stderr, "  EVENTARC_HTTP_PORT      HTTP port (default: 8085)\n")
-		fmt.Fprintf(os.Stderr, "  GCP_MOCK_LOG_LEVEL      Log level: debug, info, warn, error (default: info)\n")
-		fmt.Fprintf(os.Stderr, "  IAM_MODE                IAM enforcement: off, permissive, strict (default: off)\n")
+		fmt.Fprintf(os.Stderr, "  EVENTARC_EMULATOR_HOST   gRPC host:port for clients (e.g. localhost:9085)\n")
+		fmt.Fprintf(os.Stderr, "  EVENTARC_HTTP_PORT       HTTP port (default: 8085)\n")
+		fmt.Fprintf(os.Stderr, "  GCP_MOCK_LOG_LEVEL       Log level: debug, info, warn, error (default: info)\n")
+		fmt.Fprintf(os.Stderr, "  IAM_MODE                 IAM enforcement: off, permissive, strict (default: off)\n")
+		fmt.Fprintf(os.Stderr, "  EVENTARC_EMULATOR_TOKEN  Bearer token added to dispatched webhook requests\n")
+		fmt.Fprintf(os.Stderr, "\nHealth endpoints:\n")
+		fmt.Fprintf(os.Stderr, "  GET /healthz  returns {\"status\":\"ok\"} HTTP 200\n")
+		fmt.Fprintf(os.Stderr, "  GET /readyz   returns {\"status\":\"ok\"} HTTP 200\n")
 	}
 
 	showVersion := flag.Bool("version", false, "Print version and exit")

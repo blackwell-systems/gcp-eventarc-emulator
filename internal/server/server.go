@@ -105,7 +105,7 @@ func (s *Server) checkPermission(ctx context.Context, permission string, resourc
 		// Detect connection-refused / unavailable errors and return a user-friendly message.
 		errMsg := err.Error()
 		if strings.Contains(errMsg, "connection refused") || strings.Contains(errMsg, "Unavailable") {
-			return status.Errorf(codes.FailedPrecondition,
+			return status.Errorf(codes.Unavailable,
 				"IAM_MODE is active but no IAM emulator is reachable. "+
 					"Start the IAM emulator or set IAM_MODE=off.")
 		}

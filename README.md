@@ -69,6 +69,15 @@ grpcurl -plaintext localhost:9085 list
 
 Install grpcurl: https://github.com/fullstorydev/grpcurl
 
+### Health endpoints (REST and dual only)
+
+```bash
+curl http://localhost:8085/healthz   # {"status":"ok"}
+curl http://localhost:8085/readyz    # {"status":"ok"}
+```
+
+Both return HTTP 200. Use these in Docker health checks, Kubernetes probes, or CI readiness scripts. The gRPC-only server (`server`) does not expose HTTP — probe it with `grpcurl list localhost:9085`.
+
 ---
 
 ## Architecture
