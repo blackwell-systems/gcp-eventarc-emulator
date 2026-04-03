@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	eventarcpb "cloud.google.com/go/eventarc/apiv1/eventarcpb"
 	longrunningpb "cloud.google.com/go/longrunning/autogen/longrunningpb"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -20,7 +21,7 @@ const testParent = "projects/my-project/locations/us-central1"
 func TestCreateDone_ReturnsImmediatelyDone(t *testing.T) {
 	s := lro.NewStore()
 
-	op, err := s.CreateDone(testParent, &emptypb.Empty{})
+	op, err := s.CreateDone(testParent, &emptypb.Empty{}, "create", testParent+"/resources/test")
 	if err != nil {
 		t.Fatalf("CreateDone: unexpected error: %v", err)
 	}
@@ -37,7 +38,7 @@ func TestCreateDone_ReturnsImmediatelyDone(t *testing.T) {
 func TestCreateDone_ResponseUnpackable(t *testing.T) {
 	s := lro.NewStore()
 
-	op, err := s.CreateDone(testParent, &emptypb.Empty{})
+	op, err := s.CreateDone(testParent, &emptypb.Empty{}, "create", testParent+"/resources/test")
 	if err != nil {
 		t.Fatalf("CreateDone: unexpected error: %v", err)
 	}
@@ -107,7 +108,7 @@ func TestCancelOperation_NoOp(t *testing.T) {
 	}
 
 	// Cancel an existing operation — should also succeed.
-	op, err := s.CreateDone(testParent, &emptypb.Empty{})
+	op, err := s.CreateDone(testParent, &emptypb.Empty{}, "create", testParent+"/resources/test")
 	if err != nil {
 		t.Fatalf("CreateDone: %v", err)
 	}
@@ -124,7 +125,7 @@ func TestCancelOperation_NoOp(t *testing.T) {
 func TestWaitOperation_ReturnsImmediately(t *testing.T) {
 	s := lro.NewStore()
 
-	op, err := s.CreateDone(testParent, &emptypb.Empty{})
+	op, err := s.CreateDone(testParent, &emptypb.Empty{}, "create", testParent+"/resources/test")
 	if err != nil {
 		t.Fatalf("CreateDone: %v", err)
 	}
@@ -151,11 +152,11 @@ func TestListOperations_FiltersByPrefix(t *testing.T) {
 	parent1 := "projects/proj-a/locations/us-central1"
 	parent2 := "projects/proj-b/locations/us-central1"
 
-	op1, err := s.CreateDone(parent1, &emptypb.Empty{})
+	op1, err := s.CreateDone(parent1, &emptypb.Empty{}, "create", parent1+"/resources/test")
 	if err != nil {
 		t.Fatalf("CreateDone parent1: %v", err)
 	}
-	_, err = s.CreateDone(parent2, &emptypb.Empty{})
+	_, err = s.CreateDone(parent2, &emptypb.Empty{}, "create", parent2+"/resources/test")
 	if err != nil {
 		t.Fatalf("CreateDone parent2: %v", err)
 	}
@@ -183,5 +184,68 @@ func TestListOperations_FiltersByPrefix(t *testing.T) {
 	}
 	if len(respAll.Operations) != 2 {
 		t.Errorf("expected 2 operations total, got %d", len(respAll.Operations))
+	}
+}
+
+// TestCreateDone_MetadataPopulated verifies that CreateDone populates the
+// Operation.Metadata field with an OperationMetadata proto that has the
+// correct verb, target, api_version, and non-nil timestamps.
+func TestCreateDone_MetadataPopulated(t *testing.T) {
+	s := lro.NewStore()
+
+	const verb = "create"
+	const target = "projects/my-project/locations/us-central1/triggers/my-trigger"
+
+	op, err := s.CreateDone(testParent, &emptypb.Empty{}, verb, target)
+	if err != nil {
+		t.Fatalf("CreateDone: unexpected error: %v", err)
+	}
+	if op.Metadata == nil {
+		t.Fatal("expected op.Metadata to be non-nil")
+	}
+
+	var meta eventarcpb.OperationMetadata
+	if err := op.Metadata.UnmarshalTo(&meta); err != nil {
+		t.Fatalf("UnmarshalTo OperationMetadata: %v", err)
+	}
+	if meta.Verb != verb {
+		t.Errorf("meta.Verb = %q, want %q", meta.Verb, verb)
+	}
+	if meta.ApiVersion != "v1" {
+		t.Errorf("meta.ApiVersion = %q, want %q", meta.ApiVersion, "v1")
+	}
+	if meta.Target != target {
+		t.Errorf("meta.Target = %q, want %q", meta.Target, target)
+	}
+	if meta.CreateTime == nil {
+		t.Error("meta.CreateTime is nil")
+	}
+	if meta.EndTime == nil {
+		t.Error("meta.EndTime is nil")
+	}
+}
+
+// TestCreateDone_VerbDelete verifies that the verb field is correctly
+// propagated when calling CreateDone with verb="delete".
+func TestCreateDone_VerbDelete(t *testing.T) {
+	s := lro.NewStore()
+
+	const verb = "delete"
+	const target = "projects/my-project/locations/us-central1/triggers/my-trigger"
+
+	op, err := s.CreateDone(testParent, &emptypb.Empty{}, verb, target)
+	if err != nil {
+		t.Fatalf("CreateDone: unexpected error: %v", err)
+	}
+	if op.Metadata == nil {
+		t.Fatal("expected op.Metadata to be non-nil")
+	}
+
+	var meta eventarcpb.OperationMetadata
+	if err := op.Metadata.UnmarshalTo(&meta); err != nil {
+		t.Fatalf("UnmarshalTo OperationMetadata: %v", err)
+	}
+	if meta.Verb != verb {
+		t.Errorf("meta.Verb = %q, want %q", meta.Verb, verb)
 	}
 }
