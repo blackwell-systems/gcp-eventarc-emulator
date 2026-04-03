@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-04-03
+
+### Added
+- Pagination (`page_size`, `page_token`) on ListChannels, ListMessageBuses, ListEnrollments, ListPipelines, ListGoogleApiSources — all now consistent with the existing pagination on ListTriggers
+
 ## [0.2.1] - 2026-04-03
 
 ### Fixed
