@@ -12,6 +12,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `NewGatewayHandler()` for mounting Eventarc REST gateway in unified HTTP server
 - `gateway.Handler()` method for embedding in parent HTTP multiplexer
 
+### Fixed
+- `Register()` no longer calls `reflection.Register`, preventing fatal duplicate registration when composing multiple emulators
+
 ## [0.1.0] - 2026-04-02
 
 ### Added
