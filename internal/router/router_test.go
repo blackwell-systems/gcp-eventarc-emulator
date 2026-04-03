@@ -256,6 +256,190 @@ func TestAttrValue_ExtensionAttr(t *testing.T) {
 	}
 }
 
+// --- match-path-pattern operator tests ---
+
+func TestMatch_MatchPathPatternOperator_SingleWildcard(t *testing.T) {
+	store := &fakeStorage{
+		triggers: []*eventarcpb.Trigger{
+			{
+				Name: "projects/p/locations/us-central1/triggers/gcs-trigger",
+				EventFilters: []*eventarcpb.EventFilter{
+					{
+						Attribute: "source",
+						Value:     "//storage.googleapis.com/projects/_/buckets/*/objects/*",
+						Operator:  "match-path-pattern",
+					},
+				},
+			},
+		},
+	}
+	r := router.NewRouter(store)
+
+	// Should match: pattern has two single wildcards, event has one segment each.
+	eMatch := newTestEvent("google.cloud.storage.object.v1.finalized",
+		"//storage.googleapis.com/projects/_/buckets/my-bucket/objects/my-obj", "")
+	got, err := r.Match(context.Background(), "projects/p/locations/us-central1", eMatch)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("expected 1 match for single-wildcard path pattern, got %d", len(got))
+	}
+
+	// Should NOT match: extra segment after objects wildcard.
+	eExtra := newTestEvent("google.cloud.storage.object.v1.finalized",
+		"//storage.googleapis.com/projects/_/buckets/my-bucket/objects/foo/bar", "")
+	got2, err := r.Match(context.Background(), "projects/p/locations/us-central1", eExtra)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got2) != 0 {
+		t.Fatalf("expected 0 matches for extra segment, got %d", len(got2))
+	}
+
+	// Should NOT match: different host.
+	eWrongHost := newTestEvent("google.cloud.storage.object.v1.finalized",
+		"//other.googleapis.com/projects/_/buckets/x/objects/y", "")
+	got3, err := r.Match(context.Background(), "projects/p/locations/us-central1", eWrongHost)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got3) != 0 {
+		t.Fatalf("expected 0 matches for wrong host, got %d", len(got3))
+	}
+}
+
+func TestMatch_MatchPathPatternOperator_DoubleWildcard(t *testing.T) {
+	store := &fakeStorage{
+		triggers: []*eventarcpb.Trigger{
+			{
+				Name: "projects/p/locations/us-central1/triggers/gcs-prefix-trigger",
+				EventFilters: []*eventarcpb.EventFilter{
+					{
+						Attribute: "source",
+						Value:     "//storage.googleapis.com/projects/**",
+						Operator:  "match-path-pattern",
+					},
+				},
+			},
+		},
+	}
+	r := router.NewRouter(store)
+
+	// Should match: multiple segments after "projects".
+	eDeep := newTestEvent("google.cloud.storage.object.v1.finalized",
+		"//storage.googleapis.com/projects/foo/bar/baz", "")
+	got, err := r.Match(context.Background(), "projects/p/locations/us-central1", eDeep)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("expected 1 match for deep path with **, got %d", len(got))
+	}
+
+	// Should match: ** matches empty segment sequence (trailing slash).
+	eEmpty := newTestEvent("google.cloud.storage.object.v1.finalized",
+		"//storage.googleapis.com/projects/", "")
+	got2, err := r.Match(context.Background(), "projects/p/locations/us-central1", eEmpty)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got2) != 1 {
+		t.Fatalf("expected 1 match for trailing-slash path with **, got %d", len(got2))
+	}
+
+	// Should NOT match: different host prefix.
+	eWrongHost := newTestEvent("google.cloud.storage.object.v1.finalized",
+		"//other.googleapis.com/projects/foo", "")
+	got3, err := r.Match(context.Background(), "projects/p/locations/us-central1", eWrongHost)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got3) != 0 {
+		t.Fatalf("expected 0 matches for wrong host with **, got %d", len(got3))
+	}
+}
+
+func TestMatch_PathPatternOperatorAlias(t *testing.T) {
+	// Same scenario as SingleWildcard but with Operator="path_pattern".
+	store := &fakeStorage{
+		triggers: []*eventarcpb.Trigger{
+			{
+				Name: "projects/p/locations/us-central1/triggers/alias-trigger",
+				EventFilters: []*eventarcpb.EventFilter{
+					{
+						Attribute: "source",
+						Value:     "//storage.googleapis.com/projects/_/buckets/*/objects/*",
+						Operator:  "path_pattern",
+					},
+				},
+			},
+		},
+	}
+	r := router.NewRouter(store)
+
+	eMatch := newTestEvent("google.cloud.storage.object.v1.finalized",
+		"//storage.googleapis.com/projects/_/buckets/my-bucket/objects/my-obj", "")
+	got, err := r.Match(context.Background(), "projects/p/locations/us-central1", eMatch)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("expected 1 match for path_pattern alias operator, got %d", len(got))
+	}
+
+	eNoMatch := newTestEvent("google.cloud.storage.object.v1.finalized",
+		"//storage.googleapis.com/projects/_/buckets/my-bucket/objects/foo/bar", "")
+	got2, err := r.Match(context.Background(), "projects/p/locations/us-central1", eNoMatch)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got2) != 0 {
+		t.Fatalf("expected 0 matches for extra segment with path_pattern alias, got %d", len(got2))
+	}
+}
+
+func TestMatch_ExactMatchOperator_Unchanged(t *testing.T) {
+	// Verify that operator="" still performs exact match and is not accidentally changed.
+	store := &fakeStorage{
+		triggers: []*eventarcpb.Trigger{
+			{
+				Name: "projects/p/locations/us-central1/triggers/exact-trigger",
+				EventFilters: []*eventarcpb.EventFilter{
+					{
+						Attribute: "source",
+						Value:     "//storage.googleapis.com/projects/_/buckets/*/objects/*",
+						Operator:  "", // empty operator => exact match
+					},
+				},
+			},
+		},
+	}
+	r := router.NewRouter(store)
+
+	// The literal pattern string should match exactly.
+	eExact := newTestEvent("any.type",
+		"//storage.googleapis.com/projects/_/buckets/*/objects/*", "")
+	got, err := r.Match(context.Background(), "projects/p/locations/us-central1", eExact)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("expected 1 match for exact operator with literal pattern string, got %d", len(got))
+	}
+
+	// A path that would match the pattern but not the literal should NOT match.
+	ePatternMatch := newTestEvent("any.type",
+		"//storage.googleapis.com/projects/_/buckets/my-bucket/objects/my-obj", "")
+	got2, err := r.Match(context.Background(), "projects/p/locations/us-central1", ePatternMatch)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got2) != 0 {
+		t.Fatalf("expected 0 matches when exact operator used with non-literal source, got %d", len(got2))
+	}
+}
+
 // --- CEL condition tests ---
 
 // triggerWithCondition builds a trigger with a CEL condition stored in Labels.

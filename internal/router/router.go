@@ -11,6 +11,7 @@ package router
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/google/cel-go/cel"
 
@@ -79,9 +80,15 @@ const conditionLabelKey = "eventarc-emulator/condition"
 func triggerMatches(trigger *eventarcpb.Trigger, event cloudevents.Event, log *logger.Logger) bool {
 	for _, f := range trigger.GetEventFilters() {
 		eventVal := attrValue(event, f.GetAttribute())
-		// Operator "" and "match-path-pattern" both use exact match for now.
-		if eventVal != f.GetValue() {
-			return false
+		switch f.GetOperator() {
+		case "match-path-pattern", "path_pattern":
+			if !matchPathPattern(f.GetValue(), eventVal) {
+				return false
+			}
+		default: // "" or any unknown operator: exact match
+			if eventVal != f.GetValue() {
+				return false
+			}
 		}
 	}
 
@@ -90,6 +97,55 @@ func triggerMatches(trigger *eventarcpb.Trigger, event cloudevents.Event, log *l
 		return true
 	}
 	return evalCELCondition(condition, event, log)
+}
+
+// matchPathPattern reports whether value matches the given path pattern.
+// Pattern syntax:
+//
+//	**  matches zero or more path segments (must be a complete segment)
+//	*   matches exactly one path segment (any value)
+//	other: exact segment match (case-sensitive)
+//
+// Examples:
+//
+//	matchPathPattern("//storage.googleapis.com/projects/_/buckets/*/objects/*",
+//	                 "//storage.googleapis.com/projects/_/buckets/my-bucket/objects/my-obj")
+//	→ true
+//
+//	matchPathPattern("//storage.googleapis.com/projects/**",
+//	                 "//storage.googleapis.com/projects/foo/bar/baz")
+//	→ true
+func matchPathPattern(pattern, value string) bool {
+	pSegs := strings.Split(pattern, "/")
+	vSegs := strings.Split(value, "/")
+	return matchSegs(pSegs, vSegs)
+}
+
+// matchSegs recursively matches pattern segments against value segments.
+func matchSegs(pSegs, vSegs []string) bool {
+	for len(pSegs) > 0 {
+		p := pSegs[0]
+		pSegs = pSegs[1:]
+		if p == "**" {
+			// ** matches zero or more segments: try consuming 0..N remaining value segments.
+			for i := 0; i <= len(vSegs); i++ {
+				if matchSegs(pSegs, vSegs[i:]) {
+					return true
+				}
+			}
+			return false
+		}
+		if len(vSegs) == 0 {
+			return false
+		}
+		v := vSegs[0]
+		vSegs = vSegs[1:]
+		if p != "*" && p != v {
+			return false
+		}
+		// p == "*" or exact match: consume one segment and continue.
+	}
+	return len(vSegs) == 0
 }
 
 // evalCELCondition evaluates a CEL expression against a CloudEvent's attributes.
