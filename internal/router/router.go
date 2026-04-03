@@ -27,13 +27,11 @@ type Router struct {
 // NewRouter creates a new Router backed by the given StorageReader.
 // An optional *logger.Logger may be supplied; if omitted or nil, defaults to info level.
 func NewRouter(storage StorageReader, log ...*logger.Logger) *Router {
-	r := &Router{storage: storage}
-	if len(log) > 0 && log[0] != nil {
-		r.logger = log[0]
-	} else {
-		r.logger = logger.New("info")
+	var lgr *logger.Logger
+	if len(log) > 0 {
+		lgr = log[0]
 	}
-	return r
+	return &Router{storage: storage, logger: logger.OrDefault(lgr)}
 }
 
 // Match returns all triggers in the given project/location whose

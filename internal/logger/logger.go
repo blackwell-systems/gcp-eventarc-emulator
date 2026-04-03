@@ -74,3 +74,12 @@ func (l *Logger) Error(format string, args ...any) {
 		log.Printf("[ERROR] "+format, args...)
 	}
 }
+
+// OrDefault returns lgr if it is non-nil, or a new Logger at info level.
+// Use this to consolidate the nil-logger guard pattern at package boundaries.
+func OrDefault(lgr *Logger) *Logger {
+	if lgr != nil {
+		return lgr
+	}
+	return New("info")
+}
