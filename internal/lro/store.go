@@ -85,7 +85,7 @@ func (s *Store) GetOperation(_ context.Context, req *longrunningpb.GetOperationR
 	s.mu.RUnlock()
 
 	if !ok {
-		return nil, status.Errorf(codes.NotFound, "operation %q not found", name)
+		return nil, status.Errorf(codes.NotFound, "operation [%s] not found", name)
 	}
 	return op, nil
 }
@@ -102,7 +102,7 @@ func (s *Store) DeleteOperation(_ context.Context, req *longrunningpb.DeleteOper
 	s.mu.Unlock()
 
 	if !ok {
-		return nil, status.Errorf(codes.NotFound, "operation %q not found", name)
+		return nil, status.Errorf(codes.NotFound, "operation [%s] not found", name)
 	}
 	return &emptypb.Empty{}, nil
 }
