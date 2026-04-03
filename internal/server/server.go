@@ -256,7 +256,7 @@ func (s *Server) CreateTrigger(ctx context.Context, req *eventarcpb.CreateTrigge
 		return nil, err
 	}
 
-	return s.lro.CreateDone(req.GetParent(), trigger)
+	return s.lro.CreateDone(req.GetParent(), trigger, "create", trigger.GetName())
 }
 
 // UpdateTrigger updates an existing trigger and returns a completed LRO.
@@ -276,7 +276,7 @@ func (s *Server) UpdateTrigger(ctx context.Context, req *eventarcpb.UpdateTrigge
 		return nil, err
 	}
 
-	return s.lro.CreateDone(parent, trigger)
+	return s.lro.CreateDone(parent, trigger, "update", trigger.GetName())
 }
 
 // DeleteTrigger deletes an existing trigger and returns a completed LRO.
@@ -299,7 +299,7 @@ func (s *Server) DeleteTrigger(ctx context.Context, req *eventarcpb.DeleteTrigge
 		return nil, err
 	}
 
-	return s.lro.CreateDone(parent, trigger)
+	return s.lro.CreateDone(parent, trigger, "delete", trigger.GetName())
 }
 
 // -------------------------------------------------------------------------
@@ -398,7 +398,7 @@ func (s *Server) CreateChannel(ctx context.Context, req *eventarcpb.CreateChanne
 	if err != nil {
 		return nil, err
 	}
-	return s.lro.CreateDone(req.GetParent(), channel)
+	return s.lro.CreateDone(req.GetParent(), channel, "create", channel.GetName())
 }
 
 // UpdateChannel updates an existing channel and returns a completed LRO.
@@ -414,7 +414,7 @@ func (s *Server) UpdateChannel(ctx context.Context, req *eventarcpb.UpdateChanne
 	if err != nil {
 		return nil, err
 	}
-	return s.lro.CreateDone(parent, channel)
+	return s.lro.CreateDone(parent, channel, "update", channel.GetName())
 }
 
 // DeleteChannel deletes an existing channel and returns a completed LRO.
@@ -433,7 +433,7 @@ func (s *Server) DeleteChannel(ctx context.Context, req *eventarcpb.DeleteChanne
 	if err := s.storage.DeleteChannel(ctx, req.GetName()); err != nil {
 		return nil, err
 	}
-	return s.lro.CreateDone(parent, channel)
+	return s.lro.CreateDone(parent, channel, "delete", channel.GetName())
 }
 
 // -------------------------------------------------------------------------
@@ -487,7 +487,7 @@ func (s *Server) CreateChannelConnection(ctx context.Context, req *eventarcpb.Cr
 	if err != nil {
 		return nil, err
 	}
-	return s.lro.CreateDone(req.GetParent(), conn)
+	return s.lro.CreateDone(req.GetParent(), conn, "create", conn.GetName())
 }
 
 // DeleteChannelConnection deletes an existing channel connection and returns a completed LRO.
@@ -506,7 +506,7 @@ func (s *Server) DeleteChannelConnection(ctx context.Context, req *eventarcpb.De
 	if err := s.storage.DeleteChannelConnection(ctx, req.GetName()); err != nil {
 		return nil, err
 	}
-	return s.lro.CreateDone(parent, conn)
+	return s.lro.CreateDone(parent, conn, "update", conn.GetName())
 }
 
 // -------------------------------------------------------------------------
@@ -604,7 +604,7 @@ func (s *Server) CreateMessageBus(ctx context.Context, req *eventarcpb.CreateMes
 	if err != nil {
 		return nil, err
 	}
-	return s.lro.CreateDone(req.GetParent(), bus)
+	return s.lro.CreateDone(req.GetParent(), bus, "create", bus.GetName())
 }
 
 // UpdateMessageBus updates an existing message bus and returns a completed LRO.
@@ -620,7 +620,7 @@ func (s *Server) UpdateMessageBus(ctx context.Context, req *eventarcpb.UpdateMes
 	if err != nil {
 		return nil, err
 	}
-	return s.lro.CreateDone(parent, bus)
+	return s.lro.CreateDone(parent, bus, "update", bus.GetName())
 }
 
 // DeleteMessageBus deletes an existing message bus and returns a completed LRO.
@@ -639,7 +639,7 @@ func (s *Server) DeleteMessageBus(ctx context.Context, req *eventarcpb.DeleteMes
 	if err := s.storage.DeleteMessageBus(ctx, req.GetName()); err != nil {
 		return nil, err
 	}
-	return s.lro.CreateDone(parent, bus)
+	return s.lro.CreateDone(parent, bus, "delete", bus.GetName())
 }
 
 // -------------------------------------------------------------------------
@@ -693,7 +693,7 @@ func (s *Server) CreateEnrollment(ctx context.Context, req *eventarcpb.CreateEnr
 	if err != nil {
 		return nil, err
 	}
-	return s.lro.CreateDone(req.GetParent(), enrollment)
+	return s.lro.CreateDone(req.GetParent(), enrollment, "create", enrollment.GetName())
 }
 
 // UpdateEnrollment updates an existing enrollment and returns a completed LRO.
@@ -709,7 +709,7 @@ func (s *Server) UpdateEnrollment(ctx context.Context, req *eventarcpb.UpdateEnr
 	if err != nil {
 		return nil, err
 	}
-	return s.lro.CreateDone(parent, enrollment)
+	return s.lro.CreateDone(parent, enrollment, "update", enrollment.GetName())
 }
 
 // DeleteEnrollment deletes an existing enrollment and returns a completed LRO.
@@ -728,7 +728,7 @@ func (s *Server) DeleteEnrollment(ctx context.Context, req *eventarcpb.DeleteEnr
 	if err := s.storage.DeleteEnrollment(ctx, req.GetName()); err != nil {
 		return nil, err
 	}
-	return s.lro.CreateDone(parent, enrollment)
+	return s.lro.CreateDone(parent, enrollment, "delete", enrollment.GetName())
 }
 
 // -------------------------------------------------------------------------
@@ -782,7 +782,7 @@ func (s *Server) CreatePipeline(ctx context.Context, req *eventarcpb.CreatePipel
 	if err != nil {
 		return nil, err
 	}
-	return s.lro.CreateDone(req.GetParent(), pipeline)
+	return s.lro.CreateDone(req.GetParent(), pipeline, "create", pipeline.GetName())
 }
 
 // UpdatePipeline updates an existing pipeline and returns a completed LRO.
@@ -798,7 +798,7 @@ func (s *Server) UpdatePipeline(ctx context.Context, req *eventarcpb.UpdatePipel
 	if err != nil {
 		return nil, err
 	}
-	return s.lro.CreateDone(parent, pipeline)
+	return s.lro.CreateDone(parent, pipeline, "update", pipeline.GetName())
 }
 
 // DeletePipeline deletes an existing pipeline and returns a completed LRO.
@@ -817,7 +817,7 @@ func (s *Server) DeletePipeline(ctx context.Context, req *eventarcpb.DeletePipel
 	if err := s.storage.DeletePipeline(ctx, req.GetName()); err != nil {
 		return nil, err
 	}
-	return s.lro.CreateDone(parent, pipeline)
+	return s.lro.CreateDone(parent, pipeline, "delete", pipeline.GetName())
 }
 
 // -------------------------------------------------------------------------
@@ -871,7 +871,7 @@ func (s *Server) CreateGoogleApiSource(ctx context.Context, req *eventarcpb.Crea
 	if err != nil {
 		return nil, err
 	}
-	return s.lro.CreateDone(req.GetParent(), source)
+	return s.lro.CreateDone(req.GetParent(), source, "create", source.GetName())
 }
 
 // UpdateGoogleApiSource updates an existing google api source and returns a completed LRO.
@@ -887,7 +887,7 @@ func (s *Server) UpdateGoogleApiSource(ctx context.Context, req *eventarcpb.Upda
 	if err != nil {
 		return nil, err
 	}
-	return s.lro.CreateDone(parent, source)
+	return s.lro.CreateDone(parent, source, "update", source.GetName())
 }
 
 // DeleteGoogleApiSource deletes an existing google api source and returns a completed LRO.
@@ -906,5 +906,5 @@ func (s *Server) DeleteGoogleApiSource(ctx context.Context, req *eventarcpb.Dele
 	if err := s.storage.DeleteGoogleApiSource(ctx, req.GetName()); err != nil {
 		return nil, err
 	}
-	return s.lro.CreateDone(parent, source)
+	return s.lro.CreateDone(parent, source, "delete", source.GetName())
 }

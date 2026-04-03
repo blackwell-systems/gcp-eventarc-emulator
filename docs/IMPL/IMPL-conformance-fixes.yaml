@@ -697,6 +697,7 @@ waves:
             - internal/server/storage_pipeline.go
             - internal/server/storage_messagebus_test.go
             - internal/server/storage_pipeline_test.go
+      base_commit: a2d956fa789d2ca4a5a87d38fc0423ed0a1759a1
     - number: 2
       agents:
         - id: B
@@ -1033,6 +1034,79 @@ quality_gates:
         - type: test
           command: go test ./...
           required: true
+completion_reports:
+    A:
+        status: complete
+        branch: saw/conformance-fixes/wave1-agent-A
+        commit: 1968cec
+        files_changed:
+            - internal/lro/store.go
+            - internal/lro/store_test.go
+        tests_added:
+            - TestCreateDone_MetadataPopulated
+            - TestCreateDone_VerbDelete
+        verification: PASS
+        notes: 'CreateDone updated with verb/target params and OperationMetadata packing. lro package builds, vets, and tests clean. Out-of-scope dependency: internal/server/server.go callers of CreateDone need to pass the new verb+target args — this is the integration agent''s responsibility.'
+    C:
+        status: complete
+        branch: saw/conformance-fixes/wave1-agent-C
+        commit: 82113bd
+        files_changed:
+            - internal/server/storage.go
+            - internal/server/storage_channel.go
+            - internal/server/storage_test.go
+            - internal/server/storage_channel_test.go
+        tests_added:
+            - TestCreateTrigger_EtagSet
+            - TestUpdateTrigger_EtagRefreshed
+            - TestUpdateTrigger_WildcardMask
+            - TestCreateChannel_InitialStatePending
+            - TestCreateChannel_ActivationTokenSet
+            - TestCreateChannelConnection_ActivationTokenCleared
+            - TestGetGoogleChannelConfig_StableUpdateTime
+            - TestUpdateGoogleChannelConfig_NameRequired
+        verification: PASS
+        notes: All 8 new tests pass. Updated stale TestCreateChannel_StateIsActive -> TestCreateChannel_InitialStatePending to match new PENDING initial state. All 18 targeted tests and full server package suite pass.
+    D:
+        status: complete
+        branch: saw/conformance-fixes/wave1-agent-D
+        commit: 5787c2d
+        files_changed:
+            - internal/router/router.go
+            - internal/router/router_test.go
+            - internal/router/match_test.go
+        files_created:
+            - internal/router/match_test.go
+        tests_added:
+            - TestMatch_MatchPathPatternOperator_SingleWildcard
+            - TestMatch_MatchPathPatternOperator_DoubleWildcard
+            - TestMatch_PathPatternOperatorAlias
+            - TestMatch_ExactMatchOperator_Unchanged
+            - TestMatchPathPattern_Unit
+            - TestMatchSegs_Unit
+        verification: PASS
+        notes: All 27 tests pass (15 unit + 4 new integration + 8 pre-existing). matchPathPattern and matchSegs unexported. ** substring in segment treated as literal per constraints.
+    E:
+        status: complete
+        branch: saw/conformance-fixes/wave1-agent-E
+        commit: f91e5ee
+        files_changed:
+            - internal/server/storage_messagebus.go
+            - internal/server/storage_pipeline.go
+            - internal/server/storage_messagebus_test.go
+            - internal/server/storage_pipeline_test.go
+        files_created:
+            - internal/server/storage_messagebus_test.go
+            - internal/server/storage_pipeline_test.go
+        tests_added:
+            - TestUpdateMessageBus_WildcardMask
+            - TestUpdateEnrollment_WildcardMask
+            - TestUpdateEnrollment_MessageBusImmutable
+            - TestUpdateEnrollment_NoMask_MessageBusPreserved
+            - TestUpdatePipeline_WildcardMask
+            - TestUpdateGoogleApiSource_WildcardMask
+        verification: PASS
+        notes: All 6 new tests pass. Wildcard mask added to UpdateMessageBus, UpdateEnrollment, UpdatePipeline, UpdateGoogleApiSource. Enrollment message_bus immutability enforced in both mask and no-mask paths. Pre-commit hooks (vet + build) passed.
 pre_mortem:
     overall_risk: medium
     rows:
@@ -1101,5 +1175,5 @@ critic_report:
     summary: 'All 6 checks pass. Warning resolved: added internal/router/match_test.go to Agent D file_ownership.'
     reviewed_at: "2026-04-03T18:11:14Z"
     issue_count: 0
-state: "REVIEWED"
+state: REVIEWED
 injection_method: hook
