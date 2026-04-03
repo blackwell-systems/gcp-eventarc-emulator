@@ -1,393 +1,498 @@
-# Cold-Start UX Audit — gcp-eventarc-emulator v0.1.0
+# Cold-Start UX Audit — gcp-eventarc-emulator
 
 **Date:** 2026-04-02
-**Auditor:** Cold-start audit agent (zero prior knowledge)
-**Sandbox:** Local host, in-memory server, no GCP credentials
+**Version:** v0.1.0
+**Auditor:** Cold-start new user simulation
+**Scope:** All 16 audit areas from `docs/cold-start-audit-prompt.md`
 
 ---
 
 ## Summary
 
 | Severity | Count |
-|---|---|
-| UX-critical | 5 |
-| UX-improvement | 12 |
+|----------|-------|
+| UX-critical | 3 |
+| UX-improvement | 8 |
 | UX-polish | 9 |
-| **Total** | **26** |
+| **Total** | **20** |
 
 ---
 
 ## Area 1: Discovery
 
-### [DISCOVERY] README RPC count is inconsistent
+### [Discovery] `--log-level debug` produces no debug output
 
-- **Severity**: UX-polish
-- **What happens**: The opening tagline says "47 RPCs" but the paragraph immediately below says "40 RPCs": _"Implements the full Eventarc v1 API surface (40 RPCs) plus the Publishing service"_. The Key Capabilities section also says "47 RPCs including Publishing + Operations".
-- **Expected**: A single consistent number across all occurrences, or a clear breakdown (e.g., "40 Eventarc + 3 Publishing + 5 Operations = 48, rounded to 47").
-- **Repro**: `head -15 README.md`
+- **Severity**: UX-critical
+- **What happens**: Running `server-dual --log-level debug` logs `[INFO] Log level: debug` at startup, but after making API requests no debug-level entries appear. The log output is identical to the default `info` level. The debug setting is accepted and announced but has no observable effect.
+- **Expected**: Debug level should emit per-request logs (method name, status code, latency) and any other internal diagnostic information. A user who sets `--log-level debug` to troubleshoot routing or dispatch issues sees nothing extra.
+- **Repro**:
+  ```
+  cd /Users/dayna.blackwell/code/gcp-eventarc-emulator && \
+    go run ./cmd/server-dual --log-level debug > /tmp/emulator-debug.log 2>&1 &
+  sleep 2
+  curl -s http://localhost:8085/v1/projects/my-project/locations/us-central1/triggers
+  kill %1
+  cat /tmp/emulator-debug.log
+  # Output: 8 lines total, no [DEBUG] entries, same output as --log-level info
+  ```
 
 ---
 
-### [DISCOVERY] `--help` does not distinguish variant use-cases clearly enough
+### [Discovery] `EVENTARC_EMULATOR_TOKEN` is absent from `--help` env vars table
 
 - **Severity**: UX-improvement
-- **What happens**: Each binary's `--help` header states the variant name (`gRPC + REST server`, `gRPC-only server`, `REST-only server`) but gives no guidance on when to choose each. A new user encounters three binaries with no explanation of the trade-offs.
-- **Expected**: A one-sentence "When to use this:" blurb under each header, e.g. "Use `server-dual` (recommended) for full REST+gRPC access. Use `server` for gRPC-only workloads. Use `server-rest` only when an external gRPC backend is unavailable."
-- **Repro**: `go run ./cmd/server-dual --help`, `go run ./cmd/server --help`, `go run ./cmd/server-rest --help`
+- **What happens**: The `--help` output for all three server variants lists four environment variables: `EVENTARC_EMULATOR_HOST`, `EVENTARC_HTTP_PORT`, `GCP_MOCK_LOG_LEVEL`, and `IAM_MODE`. `EVENTARC_EMULATOR_TOKEN` — the variable that injects a bearer token into dispatched HTTP delivery requests — is not listed. A new user looking at `--help` to understand configuration options will not discover this feature.
+- **Expected**: All supported environment variables should appear in the `--help` env vars table, including `EVENTARC_EMULATOR_TOKEN` with a brief description such as `Bearer token injected into dispatched HTTP delivery requests`.
+- **Repro**:
+  ```
+  go run ./cmd/server-dual --help 2>&1 | grep -i token
+  # Output: (no output — EVENTARC_EMULATOR_TOKEN not listed)
+  ```
 
 ---
 
-### [DISCOVERY] `EVENTARC_EMULATOR_HOST` description differs across variants and is missing from `server-rest`
+### [Discovery] `--help` flag listing uses single-dash style; README uses double-dash
 
 - **Severity**: UX-polish
-- **What happens**: `server-dual` describes `EVENTARC_EMULATOR_HOST` as "gRPC host:port". `server` says "gRPC server host:port". `server-rest` omits `EVENTARC_EMULATOR_HOST` entirely from its env var table even though users may set it expecting it to work. The semantics differ per binary but these differences are not explained.
-- **Expected**: Consistent description, or an explicit note that `EVENTARC_EMULATOR_HOST` is not applicable to `server-rest`.
-- **Repro**: Compare `go run ./cmd/server-dual --help` vs `go run ./cmd/server --help` vs `go run ./cmd/server-rest --help`
+- **What happens**: The Go `flag` package displays flags with a single dash (e.g., `-grpc-port`, `-log-level`) in `--help` output. The README prose uses double-dash style (e.g., `--log-level`, `--grpc-port`). Both forms work at the command line, but the inconsistency between help text and README examples creates confusion for new users trying to copy flags.
+- **Expected**: Flag listings in `--help` should consistently use the double-dash convention to match the README and common CLI expectations.
+- **Repro**:
+  ```
+  go run ./cmd/server-dual --help
+  # Flags section shows: -grpc-port, -http-port, -log-level (single dash)
+  # README shows: --log-level, --grpc-port in prose (double dash)
+  ```
 
 ---
 
-### [DISCOVERY] `--version` output is identical across all three variants
+## Area 2: First Run — Startup and Port Bindings
+
+The startup sequence works. The server prints a clear "ready" signal: `[INFO] Ready to accept both gRPC and REST requests`. Port bindings are announced. Triggers return an empty list on first call. Providers return seeded data on first call.
+
+### [First Run] Port announcement lines appear in non-deterministic order
 
 - **Severity**: UX-polish
-- **What happens**: All three variants print `GCP Eventarc Emulator v0.1.0` with no indication of which binary is running.
-- **Expected**: `GCP Eventarc Emulator v0.1.0 (server-dual)` — matching the subtitle already present in `--help`.
-- **Repro**: `go run ./cmd/server-dual --version && go run ./cmd/server --version && go run ./cmd/server-rest --version`
+- **What happens**: The HTTP gateway and gRPC server lines (`[INFO] HTTP gateway listening at :8085` and `[INFO] gRPC server listening at [::]:9085`) appear in different order across runs. In some runs gRPC is announced first; in others HTTP is announced first.
+- **Expected**: Port announcements should appear in a consistent, logical order (gRPC first, then HTTP, or the reverse) so that log tailing and scripted startup detection are predictable.
+- **Repro**:
+  ```
+  go run ./cmd/server-dual
+  # Run multiple times; lines 4 and 5 swap order
+  ```
 
 ---
 
-### [DISCOVERY] Deprecated `--port` flag is not visually distinct in `server --help`
-
-- **Severity**: UX-improvement
-- **What happens**: The `server` binary lists `--port` alphabetically between `--log-level` and `--version` with `(deprecated: use --grpc-port)` in the description field. There is no dedicated deprecated section and no runtime warning when the flag is used.
-- **Expected**: A distinct `Deprecated Flags:` section below the main flags, or a `[DEPRECATED]` tag prefix. Using `--port` at runtime should emit a warning to stderr.
-- **Repro**: `go run ./cmd/server --help`
-
----
-
-## Area 2: First Run
-
-### [FIRST-RUN] Startup log is plain `log` format with no structure and no log-level labels
-
-- **Severity**: UX-improvement
-- **What happens**: The startup log uses Go's standard `log` package: `2026/04/02 19:02:14 <message>`. There is no JSON structure, no log level label (e.g., `INFO`), and no key=value fields. Log aggregators and `grep` pipelines cannot easily parse it.
-- **Expected**: Structured log output (JSON or logfmt) with level, timestamp, and fields. Even plain-text output should prefix each line with its level (`INFO`, `WARN`, etc.).
-- **Repro**: `go run ./cmd/server-dual > /tmp/emulator.log 2>&1 & sleep 2 && cat /tmp/emulator.log`
-
----
-
-### [FIRST-RUN] No machine-readable "ready" signal
-
-- **Severity**: UX-improvement
-- **What happens**: The server prints `Ready to accept both gRPC and REST requests` as a human-readable plain-text line. CI scripts that health-check the server must either `sleep` or grep for this exact string, which is brittle to wording changes.
-- **Expected**: A stable, structured "ready" line — e.g., `{"event":"ready","grpc_port":9085,"http_port":8085}` — or a `/healthz` HTTP endpoint that returns 200 when the server is ready.
-- **Repro**: `go run ./cmd/server-dual > /tmp/emulator.log 2>&1 & sleep 2 && cat /tmp/emulator.log`
-
----
-
-### [FIRST-RUN] REST endpoint hint in startup log uses literal `{project}` and `{location}` placeholders
+### [First Run] Startup log "REST:" example URL hardcodes `my-project`
 
 - **Severity**: UX-polish
-- **What happens**: The startup log prints: `REST: http://localhost:8085/v1/projects/{project}/locations/{location}/triggers`. The curly-brace placeholders are not copy-pasteable.
-- **Expected**: Either show a concrete example (`http://localhost:8085/v1/projects/my-project/locations/us-central1/triggers`) or just the base URL (`REST: http://localhost:8085/v1/`).
-- **Repro**: `go run ./cmd/server-dual > /tmp/emulator.log 2>&1 & sleep 2 && cat /tmp/emulator.log`
+- **What happens**: The startup log always prints:
+  ```
+  [INFO] REST: http://localhost:8085/v1/projects/my-project/locations/us-central1/triggers
+  ```
+  This is a hardcoded example URL, not reflective of any user configuration. A new user may assume this path is tied to their setup, or may try to use it literally before understanding the project/location are placeholders.
+- **Expected**: Label the line explicitly as an example, e.g., `[INFO] REST example: http://localhost:8085/v1/projects/<project>/locations/<location>/...`, or omit the hardcoded project path.
+- **Repro**:
+  ```
+  go run ./cmd/server-dual
+  # Startup always shows: my-project/locations/us-central1/triggers regardless of any config
+  ```
 
 ---
 
 ## Area 3: REST API — Core Resource Lifecycle
 
-### [REST-API] Create responses wrap the resource in an LRO envelope with no explanation in Quick Start
+All create/list/get/delete operations for triggers, channels, message buses, pipelines, and enrollments work correctly. Resources are created with fully-qualified GCP-style names. Get-after-delete returns 404 / NOT_FOUND as expected.
 
-- **Severity**: UX-improvement
-- **What happens**: Every Create call returns an LRO envelope (`{"name":"operations/...","done":true,"response":{...}}`). The actual resource is nested inside `response`. The README Quick Start shows a Create call but does not show or explain the LRO envelope, so new users see unexpected output on their first command.
-- **Expected**: The Quick Start should show the actual response shape and explain that all mutating operations return an LRO. A brief note such as "The resource is in the `.response` field" would immediately orient a new user.
-- **Repro**: `curl -s -X POST "http://localhost:8085/v1/projects/my-project/locations/us-central1/triggers?triggerId=t1" -H "Content-Type: application/json" -d '{...}'`
-
----
-
-### [REST-API] Zero-value fields included in all responses
+### [REST API] Empty string and null fields pollute JSON responses
 
 - **Severity**: UX-polish
-- **What happens**: REST responses include many empty or zero-value fields: `"operator":""`, `"serviceAccount":""`, `"networkConfig":null`, `"transport":null`, `"channel":""`, `"conditions":{}`, `"eventDataContentType":""`, `"satisfiesPzs":false`, `"retryPolicy":null`, `"etag":""`. A new user doing a simple create/get sees 20+ fields when they set 2.
-- **Expected**: Configure grpc-gateway with `EmitUnpopulated: false` or `omitempty` to omit zero-value fields, matching GCP's real Eventarc REST API behavior.
-- **Repro**: `curl -s "$BASE/triggers/audit-trigger" | python3 -m json.tool`
+- **What happens**: REST responses include zero-value proto fields that the real GCP API omits. For example, a trigger response includes `"operator": ""`, `"serviceAccount": ""`, `"channel": ""`, `"eventDataContentType": ""`, `"etag": ""`, `"networkConfig": null`, `"transport": null`, `"retryPolicy": null`, and `"conditions": {}`. Provider event type entries include `"filteringAttributes": []` and `"eventSchemaUri": ""`.
+- **Expected**: Zero-value proto fields should be omitted from JSON output using `omitempty` or the grpc-gateway `EmitUnpopulated: false` option. This matches GCP API behavior and reduces noise for developers inspecting responses.
+- **Repro**:
+  ```
+  curl -s "http://localhost:8085/v1/projects/my-project/locations/us-central1/providers" | python3 -m json.tool
+  # Shows: "filteringAttributes": [], "eventSchemaUri": "" for every event type entry
+  ```
 
 ---
 
-### [REST-API] Delete returns the deleted resource body inside an LRO instead of Empty
-
-- **Severity**: UX-improvement
-- **What happens**: `DELETE /triggers/{id}` returns HTTP 200 with an LRO containing the full trigger in `response`. GCP's real Eventarc `DeleteTrigger` LRO resolves to `google.protobuf.Empty`. Returning the full resource on delete looks like the trigger still exists.
-- **Expected**: Delete LRO `response` should be `{"@type":"type.googleapis.com/google.protobuf.Empty"}` or omit the `response` field entirely, consistent with GCP behavior.
-- **Repro**: `curl -s -w "\nHTTP %{http_code}\n" -X DELETE "$BASE/triggers/audit-trigger"`
-
----
-
-### [REST-API] NOT_FOUND error messages use inconsistent bracket styles across resource types
+### [REST API] Delete LRO response uses `{"value":{}}` inside `response` field
 
 - **Severity**: UX-polish
-- **What happens**: Trigger and channel NOT_FOUND errors use square brackets: `"Trigger [projects/...] not found"`. Operation NOT_FOUND uses double quotes: `"operation \"does-not-exist\" not found"`. The styles differ.
-- **Expected**: A single error message template across all resource types, e.g., always use square brackets or always use double-quotes.
-- **Repro**: `curl -s "$BASE/triggers/x"` vs `curl -s "http://localhost:8085/v1/operations/x"`
+- **What happens**: A successful delete returns HTTP 200 with:
+  ```json
+  {"name":"...operations/...","metadata":null,"done":true,"response":{"@type":"type.googleapis.com/google.protobuf.Empty","value":{}}}
+  ```
+  The real GCP API returns `{}` as the `response` value for delete LROs. The `{"value":{}}` representation is an artifact of how `google.protobuf.Empty` is marshalled to JSON and may confuse developers comparing emulator behavior to real GCP.
+- **Expected**: The `response` field for delete LROs should be `{}` rather than `{"@type":"...Empty","value":{}}`, or at minimum this behavior should be noted in documentation.
+- **Repro**:
+  ```
+  curl -s -w "\nHTTP %{http_code}\n" -X DELETE \
+    "http://localhost:8085/v1/projects/my-project/locations/us-central1/triggers/audit-trigger"
+  # Returns LRO with response: {"@type":"...Empty","value":{}}
+  ```
 
 ---
 
-## Area 4: LRO REST Gateway
+## Area 4: Health Endpoints
 
-### [LRO] Polling an LRO by its own `name` field returns NOT_FOUND
+`/healthz` and `/readyz` both return `{"status":"ok"}` with HTTP 200 on the dual-protocol and REST-only servers. The gRPC-only server (`server`) has no HTTP port so health probes via curl return HTTP 000 (connection refused), which is expected.
+
+### [Health] Health endpoints not documented in `--help` or README
+
+- **Severity**: UX-improvement
+- **What happens**: `/healthz` and `/readyz` work correctly but are not mentioned in `--help` output or anywhere in the README. A new user setting up container health checks or a readiness probe has no way to discover these endpoints from the tool's own documentation.
+- **Expected**: The `--help` output (or at minimum the README) should list `/healthz` and `/readyz` as available endpoints. Ideally they also appear in the startup log alongside the port announcements.
+- **Repro**:
+  ```
+  go run ./cmd/server-dual --help 2>&1 | grep -i health
+  grep -i healthz README.md
+  # Both return no output
+  ```
+
+---
+
+### [Health] gRPC-only server has no documented alternative for health probing
+
+- **Severity**: UX-improvement
+- **What happens**: Users who choose `server` (gRPC-only) cannot use HTTP health probes. The `--help` text does not mention this limitation and does not suggest using gRPC health probes (`grpc.health.v1`) or switching to `server-dual` for health-probe support. A user setting up `server` in a container orchestration environment will discover this limitation only by failing.
+- **Expected**: The `server` binary's `--help` or startup log should note that no HTTP health endpoint is available and suggest `server-dual` if HTTP health probes are needed.
+- **Repro**:
+  ```
+  go run ./cmd/server --help
+  # No mention of health probes or absence of /healthz
+  ```
+
+---
+
+## Area 6: LRO REST Gateway
+
+LRO polling works correctly. `GET /v1/<operation-name>` returns the full LRO with `done: true` and the resource embedded in `response`. The `$BASE/operations` list endpoint is accessible. Nonexistent operations return 404.
+
+### [LRO] NOT_FOUND error messages use inconsistent quoting style across resource types
+
+- **Severity**: UX-polish
+- **What happens**: NOT_FOUND errors use different formatting depending on resource type:
+  - Trigger: `"Trigger [projects/.../triggers/name] not found"` — square brackets
+  - Channel: `"Channel \"projects/.../channels/name\" not found"` — escaped double quotes
+  - Operation: `"operation [does-not-exist] not found"` — square brackets, no project path, lowercase resource name
+- **Expected**: All NOT_FOUND error messages should use the same formatting for the resource name (e.g., square brackets or double quotes, consistently). Operations should also include the fully-qualified name to aid debugging.
+- **Repro**:
+  ```
+  curl -s "http://localhost:8085/v1/operations/does-not-exist"
+  curl -s "http://localhost:8085/v1/projects/p/locations/l/channels/x"
+  curl -s "http://localhost:8085/v1/projects/p/locations/l/triggers/x"
+  # Three different quoting and casing styles
+  ```
+
+---
+
+## Area 7: Event Publishing and Routing
+
+The full CloudEvent delivery loop works correctly end-to-end:
+
+- `publishEvents` returns HTTP 200 with `{}`.
+- Matching events are delivered to the webhook with all expected `Ce-*` headers: `Ce-Id`, `Ce-Source`, `Ce-Specversion`, `Ce-Subject`, `Ce-Type`.
+- Non-matching events (wrong type) are silently dropped and never delivered to the webhook.
+- Event body is delivered as valid JSON in the HTTP body with `Content-Type: text/plain`.
+
+---
+
+## Area 8: Channel Validation
+
+Publishing to a nonexistent channel returns HTTP 404 with a clear NOT_FOUND error message naming the missing channel. No issues.
+
+---
+
+## Area 9: Trigger Validation
+
+Validation is strong across all tested cases. Missing destination returns 400 with field violations. Empty body returns 400 with multiple field violations. Missing `triggerId` returns 400. Duplicate trigger returns 409 with ALREADY_EXISTS.
+
+### [Validation] Error responses omit the `"status"` string field from gRPC-gateway convention
+
+- **Severity**: UX-polish
+- **What happens**: gRPC-gateway error responses conventionally include three fields: `code` (integer), `message` (string), and `status` (string, e.g., `"NOT_FOUND"`). The emulator returns only `code` and `message`:
+  ```json
+  {"code":5,"message":"Trigger [...] not found","details":[]}
+  ```
+  The string `"status"` field is absent. Clients that pattern-match on `response.status === "NOT_FOUND"` will not find it.
+- **Expected**: Add the `"status"` string field matching the gRPC status name to all error responses (e.g., `"status":"NOT_FOUND"`, `"status":"ALREADY_EXISTS"`, `"status":"INVALID_ARGUMENT"`).
+- **Repro**:
+  ```
+  curl -s "http://localhost:8085/v1/projects/my-project/locations/us-central1/triggers/nope"
+  # Returns: {"code":5,"message":"...","details":[]} — no "status" field
+  ```
+
+---
+
+## Area 10: gRPC API
+
+gRPC reflection is enabled and works without a `.proto` file. All three services are exposed: `google.cloud.eventarc.v1.Eventarc` (40 methods), `google.cloud.eventarc.publishing.v1.Publisher` (3 methods), `google.longrunning.Operations` (5 methods). Snake_case field names work as expected. The LRO in `CreateTrigger` is marked `done: true` with the trigger embedded in `response`. No issues found.
+
+---
+
+## Area 11: SDK Demo
+
+### [SDK Demo] Delete trigger step fails with proto mismatch — sdk-demo exits non-zero
 
 - **Severity**: UX-critical
-- **What happens**: Every Create/Update/Delete response includes `"name":"projects/my-project/locations/us-central1/operations/..."`. Following the GCP LRO pattern, a user does `GET /v1/<name>` to poll the operation. This returns `{"code":5,"message":"Not Found","details":[]}`. The REST route for the operation name is not registered.
-- **Expected**: `GET /v1/projects/{project}/locations/{location}/operations/{id}` should return the LRO object. GCP SDKs that call `op.Wait()` rely on this endpoint. The gRPC `GetOperation` works, but the corresponding REST route does not.
+- **What happens**: The SDK demo runs steps 1-7 successfully (list providers, get provider, create trigger, get trigger, list triggers, update trigger, publish event), then fails at step 8 (Delete trigger) with:
+  ```
+  2026/04/02 20:23:09 ERROR wait for delete: proto: mismatched message type: got "google.cloud.eventarc.v1.Trigger", want "google.protobuf.Empty"
+  exit status 1
+  ```
+  The `DeleteTrigger` LRO `response` field contains a `Trigger` proto instead of a `google.protobuf.Empty`. The Go SDK's `WaitOperation` call expects `Empty` for delete operations and fails to unmarshal.
+- **Expected**: The `DeleteTrigger` LRO response should contain `google.protobuf.Empty`, not a `Trigger`. The sdk-demo should complete all 8 steps and exit 0.
 - **Repro**:
+  ```
+  # Start emulator
+  go run ./cmd/server-dual &
+  sleep 2
+  # Create my-channel (or let sdk-demo create it)
+  curl -s -X POST "http://localhost:8085/v1/projects/my-project/locations/us-central1/channels?channelId=my-channel" \
+    -H "Content-Type: application/json" -d '{}'
+  # Run SDK demo
+  cd /Users/dayna.blackwell/code/gcp-eventarc-emulator/examples/sdk-demo && \
+    EVENTARC_EMULATOR_HOST=localhost:9085 \
+    WEBHOOK_URI=http://localhost:3000/events \
+    go run main.go
+  # Exit code 1, ERROR at step 8
+  ```
+
+---
+
+### [SDK Demo] `go run ./examples/webhook-receiver` from project root fails with unhelpful error
+
+- **Severity**: UX-improvement
+- **What happens**: The webhook receiver lives in `examples/webhook-receiver/` with its own `go.mod`. Running `go run ./examples/webhook-receiver` from the project root fails with:
+  ```
+  main module (github.com/blackwell-systems/gcp-eventarc-emulator) does not contain package
+  github.com/blackwell-systems/gcp-eventarc-emulator/examples/webhook-receiver
+  ```
+  The error message does not explain the module boundary issue. The README correctly documents `cd examples/webhook-receiver && go run main.go`, but a user running all commands from the project root will hit this error with no actionable guidance.
+- **Expected**: Either add a `go.work` workspace file to allow running from the project root, or document in the error output (or README) that the webhook-receiver is a separate module requiring `cd examples/webhook-receiver` first.
+- **Repro**:
+  ```
+  go run ./examples/webhook-receiver
+  # Error: main module does not contain package ... (no mention of separate go.mod)
+  ```
+
+---
+
+### [SDK Demo] README SDK Demo section does not mention `WEBHOOK_URI` env var
+
+- **Severity**: UX-improvement
+- **What happens**: The README SDK Demo section shows:
   ```bash
-  RESP=$(curl -s -X POST "$BASE/triggers?triggerId=lro-test" -H "Content-Type: application/json" -d '{...}')
-  OP_NAME=$(echo "$RESP" | python3 -c "import sys,json; print(json.load(sys.stdin)['name'])")
-  curl -s "http://localhost:8085/v1/$OP_NAME"
+  cd examples/sdk-demo && EVENTARC_EMULATOR_HOST=localhost:9085 go run main.go
+  ```
+  The actual command requires `WEBHOOK_URI=http://localhost:3000/events` as well (the sdk-demo uses this to configure the trigger destination). Without `WEBHOOK_URI`, the sdk-demo creates a trigger pointing to an empty or default URI, and event delivery will silently fail or reach the wrong endpoint.
+- **Expected**: The README should include `WEBHOOK_URI=http://localhost:3000/events` in the sdk-demo run command, matching the audit prompt's correct invocation.
+- **Repro**:
+  ```
+  # README command (missing WEBHOOK_URI):
+  cd examples/sdk-demo && EVENTARC_EMULATOR_HOST=localhost:9085 go run main.go
+  # Correct command used in audit:
+  EVENTARC_EMULATOR_HOST=localhost:9085 WEBHOOK_URI=http://localhost:3000/events go run main.go
+  ```
+
+---
+
+## Area 12: Env Vars — EVENTARC_EMULATOR_TOKEN and IAM_MODE
+
+`EVENTARC_EMULATOR_TOKEN` works correctly. The `Authorization: Bearer <token>` header is injected into dispatched delivery requests and appears in webhook logs. The startup log correctly reports the active `IAM mode:` at startup.
+
+### [IAM] Strict mode with no IAM emulator returns HTTP 400 (FAILED_PRECONDITION) instead of HTTP 403
+
+- **Severity**: UX-improvement
+- **What happens**: When `IAM_MODE=strict` and no IAM emulator is reachable, all requests return:
+  ```json
+  {"code":9,"message":"IAM_MODE is active but no IAM emulator is reachable. Start the IAM emulator or set IAM_MODE=off.","details":[]}
+  HTTP 400
+  ```
+  gRPC code 9 is `FAILED_PRECONDITION`. While the error message is helpful, a developer expecting a 403 (permission denied) when IAM enforcement is active will be confused by 400. The README table says strict + no IAM emulator = "Deny" without specifying the error code.
+- **Expected**: Consider returning `PERMISSION_DENIED` (code 7, HTTP 403) for all IAM denials including the misconfiguration case. This would match the "Deny" semantics documented in the README table and match what a user would expect from an IAM enforcement layer.
+- **Repro**:
+  ```
+  IAM_MODE=strict go run ./cmd/server-dual &
+  sleep 2
+  curl -s -w "\nHTTP %{http_code}\n" \
+    "http://localhost:8085/v1/projects/my-project/locations/us-central1/triggers"
+  # Returns HTTP 400, not 403
+  ```
+
+---
+
+### [IAM] README IAM table rows "No IAM emulator" and "IAM unavailable" are ambiguous duplicates
+
+- **Severity**: UX-polish
+- **What happens**: The README IAM enforcement table has two rows that both show `Allow` for `permissive` mode:
+  - "No IAM emulator" → permissive: Allow
+  - "IAM unavailable" → permissive: Allow
+
+  These appear to describe the same condition. The distinction (if any) between "not configured" and "configured but unreachable" is not explained.
+- **Expected**: Collapse these two rows into one, or add a note explaining the distinction between the two failure modes (e.g., `IAM_EMULATOR_HOST` not set vs. set but unreachable).
+- **Repro**: Read `README.md` section "IAM Integration / Enforcement Modes".
+
+---
+
+## Area 13: Log Level Flag
+
+### [Log Level] `--log-level debug` behavior is a duplicate of the Area 1 finding
+
+This finding is documented under Area 1 (Discovery) where a new user first encounters it. See: **[Discovery] `--log-level debug` produces no debug output**.
+
+### [Log Level] Flag-vs-env-var precedence documented in `--help` but not in README
+
+- **Severity**: UX-polish
+- **What happens**: The `--log-level` flag in `--help` explicitly states `(env: GCP_MOCK_LOG_LEVEL; flag takes precedence)`. This is helpful. The README Configuration section lists `GCP_MOCK_LOG_LEVEL` as an env var but does not mention that the `--log-level` flag overrides it. Behavior is correct — flag wins — but a user who sets the env var and a flag simultaneously may not know which takes precedence.
+- **Expected**: The README Configuration / Environment Variables table should note flag precedence for `GCP_MOCK_LOG_LEVEL` (and any other overridable env vars).
+- **Repro**:
+  ```
+  GCP_MOCK_LOG_LEVEL=error go run ./cmd/server-dual --log-level debug
+  # Result: debug wins; log shows "[INFO] Log level: debug"
+  # README does not document this precedence
+  ```
+
+---
+
+## Area 14: Edge Cases and Error Handling
+
+### [Edge Cases] Invalid port type error says "parse error" with no type guidance
+
+- **Severity**: UX-improvement
+- **What happens**: Passing a non-numeric port value gives:
+  ```
+  invalid value "notaport" for flag -grpc-port: parse error
+  ```
+  The message "parse error" is terse and does not tell the user what type is expected (integer).
+- **Expected**: The error should say something like `invalid value "notaport" for flag -grpc-port: expected integer`, matching the clearer style of the out-of-range error (`must be in range 1-65535`).
+- **Repro**:
+  ```
+  go run ./cmd/server-dual --grpc-port notaport
+  # Error: "parse error" — no type hint
+  go run ./cmd/server-dual --grpc-port 99999
+  # Error: "must be in range 1-65535" — clearer
+  ```
+
+---
+
+### [Edge Cases] Malformed JSON error exposes raw Go parse internals
+
+- **Severity**: UX-improvement
+- **What happens**: Sending a non-JSON body returns:
+  ```json
+  {"code":3,"message":"invalid character 'h' in literal true (expecting 'r')","details":[]}
+  ```
+  This is a raw `encoding/json` error. It mentions a character but gives no hint about what was expected at that position or that the body must be a JSON object.
+- **Expected**: The error message should be more user-facing: e.g., `"request body must be valid JSON"` with optionally the underlying parse detail appended. The current message leaks implementation details without helping the user fix their input.
+- **Repro**:
+  ```
+  curl -s -X POST "http://localhost:8085/v1/projects/p/locations/l/triggers?triggerId=t" \
+    -H "Content-Type: application/json" \
+    -d 'this is not json'
+  # Returns: "invalid character 'h' in literal true (expecting 'r')"
+  ```
+
+---
+
+### [Edge Cases] DELETE nonexistent resource returns 404 (correct)
+
+No issue. Deleting a nonexistent trigger returns HTTP 404 with NOT_FOUND. This is correct GCP behavior.
+
+### [Edge Cases] Unknown path returns 404 with minimal body
+
+- **Severity**: UX-polish
+- **What happens**: A completely unknown path returns:
+  ```json
+  {"code":5,"message":"Not Found","details":[]}
+  HTTP 404
+  ```
+  The message is generic `"Not Found"` with no hint about the valid path structure.
+- **Expected**: The 404 for unknown paths could include a hint such as `"path not recognized; REST API paths follow the pattern /v1/projects/{project}/locations/{location}/..."`. This is a minor quality-of-life note.
+- **Repro**:
+  ```
+  curl -s -w "\nHTTP %{http_code}\n" "http://localhost:8085/totally/unknown/path"
   # Returns: {"code":5,"message":"Not Found","details":[]}
   ```
 
 ---
 
-### [LRO] Operations list endpoint (`$BASE/operations`) returns NOT_FOUND
+## Area 15: Test Suite
 
-- **Severity**: UX-critical
-- **What happens**: `GET /v1/projects/my-project/locations/us-central1/operations` returns `{"code":5,"message":"Not Found","details":[]}` with HTTP 404. The route is not registered.
-- **Expected**: This endpoint should return `{"operations":[...]}` (even if empty), consistent with the `google.longrunning.Operations` REST surface.
-- **Repro**: `curl -s "http://localhost:8085/v1/projects/my-project/locations/us-central1/operations"`
+All tests pass with no race conditions detected:
 
----
+```
+go test ./...         # all pass
+go test -race ./...   # all pass
+go test -v -run TestIntegration ./...  # passes
+```
 
-### [LRO] LRO behavior is not documented near the REST gateway section
+`make test`, `make test-race`, and `make test-integration` targets exist in the Makefile.
 
-- **Severity**: UX-improvement
-- **What happens**: "Immediate LRO resolution" is buried in "Differences from GCP" at the bottom of the README. A new user who tries to poll an LRO REST URL hits NOT_FOUND (the bug above) before reading this note.
-- **Expected**: A dedicated "LRO Behavior" note near the REST Gateway section explaining: (1) all LROs resolve to `done: true` immediately, (2) the resource is in the `response` field, (3) REST polling endpoints for operations are not yet implemented.
-- **Repro**: Search README for LRO documentation — found only in "Differences from GCP" section.
-
----
-
-## Area 5: Event Publishing and Routing
-
-### [ROUTING] `go run ./examples/webhook-receiver` fails with "does not contain package"
-
-- **Severity**: UX-critical
-- **What happens**: Running `go run ./examples/webhook-receiver` from the project root prints:
-  `main module (...) does not contain package .../examples/webhook-receiver`
-  The webhook-receiver is a separate Go module (`examples/webhook-receiver/go.mod`) and must be run from its own directory.
-- **Expected**: The README Quick Start and `sdk-demo/main.go` source comment both show this command as if it can be run from the project root. The docs must specify `cd examples/webhook-receiver && go run main.go`, or the webhook-receiver should be moved into the main module.
-- **Repro**: `go run ./examples/webhook-receiver` (from project root)
-
----
-
-### [ROUTING] `Ce-Time` header absent from dispatched events
-
-- **Severity**: UX-improvement
-- **What happens**: The webhook receiver shows: `Ce-Id`, `Ce-Source`, `Ce-Specversion`, `Ce-Subject`, `Ce-Type`. The `Ce-Time` header is absent even when the publish payload included `"time": {"ceTimestamp": "2026-04-02T12:00:00Z"}` in event attributes.
-- **Expected**: If a `time` attribute is provided in the published event, it should be forwarded as a `Ce-Time` header in the dispatched request. The CloudEvents spec treats `time` as an optional but standard context attribute.
-- **Repro**: Publish an event with a `time` attribute and inspect the webhook receiver log.
-
----
-
-## Area 6: Channel Validation
-
-Channel NOT_FOUND behavior is clear and correct. Publishing to a nonexistent channel returns HTTP 404 with a full resource name in the error message. No issues found.
-
----
-
-## Area 7: Trigger Validation
-
-### [VALIDATION] Validation returns only the first error, not all constraint violations
-
-- **Severity**: UX-improvement
-- **What happens**: Creating a trigger with both `destination` and `eventFilters` missing only reports `"trigger.destination is required"`. The second missing field (`eventFilters`) is not reported until the first error is fixed. Single-error responses force users to fix issues one at a time.
-- **Expected**: Return all validation errors in a single response using the `details` array (gRPC status details), consistent with how real GCP validates and returns multiple constraint violations.
-- **Repro**: `curl -X POST "$BASE/triggers?triggerId=bad" -H "Content-Type: application/json" -d '{}'` — only one error returned.
-
----
-
-### [VALIDATION] Missing `triggerId` error uses snake_case in a REST camelCase context
+### [Tests] No test files in any `cmd/` package
 
 - **Severity**: UX-polish
-- **What happens**: `POST /triggers` with no `?triggerId=` query parameter returns `{"code":3,"message":"trigger_id is required","details":[]}`. The error uses protobuf snake_case (`trigger_id`) but the REST API surface uses camelCase everywhere (`triggerId`, `eventFilters`, `httpEndpoint`).
-- **Expected**: `"message":"triggerId is required"` to be consistent with REST naming conventions.
-- **Repro**: `curl -s -X POST "$BASE/triggers" -H "Content-Type: application/json" -d '{...}'`
-
----
-
-## Area 8: gRPC API
-
-gRPC reflection is enabled and fully functional. All three services (`Eventarc`, `Publisher`, `Operations`) are listed via `grpcurl list`. CRUD operations work correctly over gRPC. One issue found:
-
-### [GRPC] Delete via gRPC returns the deleted resource in `response` instead of Empty
-
-- **Severity**: UX-improvement
-- **What happens**: `DeleteTrigger` via gRPC returns an LRO with `done: true` and `response` containing the full Trigger proto. GCP's real `DeleteTrigger` LRO resolves to `google.protobuf.Empty`. This diverges from GCP behavior at the gRPC layer, not just the REST layer.
-- **Expected**: Delete LRO `response` should be `google.protobuf.Empty`.
-- **Repro**: `grpcurl -plaintext -d '{"name":"..."}' localhost:9085 google.cloud.eventarc.v1.Eventarc/DeleteTrigger`
-
----
-
-### [GRPC] `grpcurl` not mentioned in README as a diagnostic tool
-
-- **Severity**: UX-polish
-- **What happens**: The README has no mention of `grpcurl`. A new user who wants to verify gRPC connectivity or explore available methods must discover this tool independently.
-- **Expected**: A short "Verify gRPC connectivity" snippet using `grpcurl -plaintext localhost:9085 list` in the Quick Start or a "Development Tools" section.
-- **Repro**: `grep grpcurl README.md` — not found.
-
----
-
-## Area 9: SDK Demo
-
-### [SDK-DEMO] README does not document that `my-channel` must be pre-created before running the sdk-demo
-
-- **Severity**: UX-critical
-- **What happens**: The sdk-demo publishes to `projects/my-project/locations/us-central1/channels/my-channel` but does not create the channel itself. Running the sdk-demo against a fresh emulator without pre-creating `my-channel` causes `must publish events: rpc error: code = NotFound` and exits non-zero. The `sdk-demo/main.go` source comment also omits this step.
-- **Expected**: The README or `main.go` source comment should include:
-  ```bash
-  curl -X POST "http://localhost:8085/v1/projects/my-project/locations/us-central1/channels?channelId=my-channel" \
-    -H "Content-Type: application/json" -d '{}'
+- **What happens**: All three `cmd/` packages report `[no test files]`. Startup flag parsing, `--version` output, and `--log-level` behavior are untested. The fact that `--log-level debug` has no observable effect on verbosity is not caught by any existing test.
+- **Expected**: Smoke tests for each `cmd/` entry point would catch regressions in startup behavior, flag validation, and version output.
+- **Repro**:
   ```
-  before the `go run main.go` step.
-- **Repro**: Run `go run ./examples/sdk-demo/main.go` against a fresh emulator without pre-creating `my-channel`.
+  go test ./...
+  # ?   .../cmd/server      [no test files]
+  # ?   .../cmd/server-dual [no test files]
+  # ?   .../cmd/server-rest [no test files]
+  ```
 
 ---
 
-### [SDK-DEMO] SDK demo completion message does not include the event ID to identify the delivery in webhook logs
+## Area 16: Output Review
 
-- **Severity**: UX-improvement
-- **What happens**: After publishing, the demo prints "event dispatched; check webhook receiver logs for delivery confirmation" but does not print the event ID (`sdk-evt-<timestamp>`). A user with multiple triggers active (or stale triggers from prior tests) sees multiple entries in the webhook log and cannot immediately identify which one belongs to the current sdk-demo run.
-- **Expected**: Include the event ID in the completion message: `→ event id: sdk-evt-1775181935798676000 — search webhook logs for Ce-Id: <id>`.
-- **Repro**: Run the full audit sequence and observe the webhook log after the sdk-demo.
-
----
-
-## Area 10: Env Vars
-
-### [ENV-VARS] Startup log does not confirm `EVENTARC_EMULATOR_TOKEN` is active
-
-- **Severity**: UX-improvement
-- **What happens**: When `EVENTARC_EMULATOR_TOKEN` is set, the startup log shows `IAM mode: off` but makes no mention of the token. A user who sets the env var has no way to confirm it was picked up without sending a live test event and inspecting the webhook log.
-- **Expected**: A startup log line such as `Token injection: enabled` (or `Bearer token: set`) so users can confirm configuration without a live test.
-- **Repro**: `EVENTARC_EMULATOR_TOKEN=my-secret-test-token go run ./cmd/server-dual` — observe startup log.
-
----
-
-### [ENV-VARS] `IAM_MODE=permissive` allows unauthenticated requests contrary to README documentation
-
-- **Severity**: UX-critical
-- **What happens**: The README IAM table states "No principal → Deny" for `permissive` mode. Running `IAM_MODE=permissive go run ./cmd/server-dual` and sending a plain `curl` (no Authorization header, no principal) returns HTTP 200 with results — the request is allowed, not denied.
-- **Expected**: `permissive` mode with no principal should return HTTP 403 / gRPC PERMISSION_DENIED, matching the documented behavior table.
-- **Repro**: `IAM_MODE=permissive go run ./cmd/server-dual` then `curl http://localhost:8085/v1/projects/my-project/locations/us-central1/triggers` — returns HTTP 200.
-
----
-
-### [ENV-VARS] Env var prefix is inconsistent across configuration variables
+### [Output] REST responses are minified JSON by default with no pretty-print option
 
 - **Severity**: UX-polish
-- **What happens**: Some env vars use the `EVENTARC_` prefix (`EVENTARC_EMULATOR_HOST`, `EVENTARC_HTTP_PORT`, `EVENTARC_EMULATOR_TOKEN`), while others use unrelated prefixes (`GCP_MOCK_LOG_LEVEL`) or no prefix at all (`IAM_MODE`). This increases the chance of name collisions with existing environment variables.
-- **Expected**: All env vars should share a common prefix (e.g., `EVENTARC_`) and be documented consistently. `IAM_MODE` → `EVENTARC_IAM_MODE`, `GCP_MOCK_LOG_LEVEL` → `EVENTARC_LOG_LEVEL`.
-- **Repro**: `go run ./cmd/server-dual --help` — env var section.
+- **What happens**: All REST responses are minified single-line JSON. There is no `?prettyPrint=true` query parameter (a GCP API convention). The README includes a tip to pipe through `| jq .`, but users reading raw curl output in a terminal will see dense, unreadable responses.
+- **Expected**: Support a `?prettyPrint=true` query parameter (matching GCP API convention) for developer ergonomics during local development and testing.
+- **Repro**:
+  ```
+  curl -s "http://localhost:8085/v1/projects/my-project/locations/us-central1/providers"
+  # Output: single-line minified JSON only
+  ```
 
 ---
 
-## Area 11: Log Level Flag
-
-### [LOG-LEVEL] `--log-level debug` produces no additional output beyond startup lines
-
-- **Severity**: UX-critical
-- **What happens**: `go run ./cmd/server-dual --log-level debug` produces exactly 8 lines — identical to `info` and `error` levels. After sending a request, no debug lines appear (no per-request log, no routing decisions, no dispatch results). The flag is accepted and reflected in startup (`Log level: debug`) but has no observable effect on verbosity.
-- **Expected**: `debug` level should emit per-request logs (method, path, latency, status), routing decisions ("N triggers matched for type=X"), dispatch results ("dispatching to http://..., status: 200"), and internal state changes.
-- **Repro**: `go run ./cmd/server-dual --log-level debug > /tmp/debug.log 2>&1 & sleep 2 && curl -s "$BASE/triggers" && cat /tmp/debug.log` — 8 lines regardless.
-
----
-
-### [LOG-LEVEL] `--log-level error` does not suppress startup info lines
-
-- **Severity**: UX-improvement
-- **What happens**: Setting `GCP_MOCK_LOG_LEVEL=error` still prints all 8 startup info lines. For CI environments that pipe server logs to a file and grep only for errors, the startup lines are noise at every run.
-- **Expected**: Startup lines should be emitted at `info` level and suppressed at `error` level. Alternatively, add a `--quiet` flag to suppress startup output independently of runtime log level.
-- **Repro**: `GCP_MOCK_LOG_LEVEL=error go run ./cmd/server-dual` — all startup lines still print.
-
----
-
-### [LOG-LEVEL] Flag takes precedence over env var but this is undocumented
+### [Output] Startup log mixes two formats: bare timestamp on banner line, `[INFO]` on all others
 
 - **Severity**: UX-polish
-- **What happens**: When both `GCP_MOCK_LOG_LEVEL=error` and `--log-level debug` are set, the flag wins. This is reasonable but is documented nowhere — not in `--help` nor in the README.
-- **Expected**: A note in `--help` next to each flag: `(env: GCP_MOCK_LOG_LEVEL; flag takes precedence)`.
-- **Repro**: `GCP_MOCK_LOG_LEVEL=error go run ./cmd/server-dual --log-level debug` — `Log level: debug`.
+- **What happens**: The first startup line has no log level label:
+  ```
+  2026/04/02 20:25:39 GCP Eventarc Emulator v0.1.0 (gRPC + REST)
+  ```
+  All subsequent lines have `[INFO]`:
+  ```
+  2026/04/02 20:25:39 [INFO] Log level: info
+  ```
+  This inconsistency is minor but visible in terminals and log aggregators that parse the log level label.
+- **Expected**: All startup log lines should use the same format. Either add `[INFO]` to the banner line or remove it from subsequent lines.
+- **Repro**:
+  ```
+  go run ./cmd/server-dual
+  # Line 1: no [INFO]; lines 2-8 have [INFO]
+  ```
 
 ---
 
-## Area 12: Edge Cases and Error Handling
-
-### [EDGE] Out-of-range port value (`--grpc-port 99999`) fails at runtime, not at flag parse time
-
-- **Severity**: UX-improvement
-- **What happens**: `--grpc-port 99999` is accepted without error during flag parsing. The server starts and prints all startup lines before failing: `Failed to listen on gRPC port: listen tcp: address 99999: invalid port`.
-- **Expected**: Port range validation (1-65535) should happen immediately during flag parsing, before any startup output, and exit with a clean usage-style error.
-- **Repro**: `go run ./cmd/server-dual --grpc-port 99999`
-
----
-
-### [EDGE] Malformed JSON error message quotes raw Go parser internals
-
-- **Severity**: UX-improvement
-- **What happens**: POSTing non-JSON returns `{"code":3,"message":"invalid character 'h' in literal true (expecting 'r')","details":[]}`. This is the raw Go `encoding/json` error. A new user who accidentally sends a plain string (like `"hello"` without braces) may not understand the error.
-- **Expected**: Prefix with context: `"request body is not valid JSON: invalid character 'h'..."` to make clear the entire body was rejected.
-- **Repro**: `curl -s -X POST "$BASE/triggers?triggerId=bad" -H "Content-Type: application/json" -d 'this is not json'`
-
----
-
-### [EDGE] Deprecated `--port` flag on `server` binary does not emit a runtime deprecation warning
-
-- **Severity**: UX-improvement
-- **What happens**: `go run ./cmd/server --port 9085` starts successfully with no deprecation warning in the log. The only indication that `--port` is deprecated is in `--help`.
-- **Expected**: Using `--port` should print to stderr: `WARNING: --port is deprecated; use --grpc-port instead`.
-- **Repro**: `go run ./cmd/server --port 9085 > /tmp/log.log 2>&1 & sleep 2 && cat /tmp/log.log` — no deprecation warning.
-
----
-
-### [EDGE] Unknown path error body omits the requested path
+### [Output] `server` binary startup log differs in terminology and structure from `server-dual`
 
 - **Severity**: UX-polish
-- **What happens**: `GET /totally/unknown/path` returns `{"code":5,"message":"Not Found","details":[]}`. The error does not identify what was not found.
-- **Expected**: `"message": "No route found for GET /totally/unknown/path"` to help diagnose path typos.
-- **Repro**: `curl -s -w "\nHTTP %{http_code}\n" "http://localhost:8085/totally/unknown/path"`
+- **What happens**: The `server` (gRPC-only) startup log uses different terminology than `server-dual`:
+  - `server`: `"Server listening at [::]:9085"`, `"Ready to accept connections"`, `"Publisher service registered"`
+  - `server-dual`: `"gRPC server listening at [::]:9085"`, `"HTTP gateway listening at :8085"`, `"Ready to accept both gRPC and REST requests"`
 
----
-
-## Area 13: Test Suite
-
-All tests pass (`go test ./...`, `go test -race ./...`). Test names are descriptive. One minor gap:
-
-### [TESTS] No `make test-integration` or `make test-race` Makefile targets
-
-- **Severity**: UX-polish
-- **What happens**: The Makefile has `test: go test ./...` but no targets for the race detector or integration-only runs, even though the README documents both patterns explicitly (`go test -race ./...`, `go test -v -run TestIntegration ./...`).
-- **Expected**: Add `test-race` and `test-integration` targets to the Makefile to match the README testing section.
-- **Repro**: `cat Makefile`
-
----
-
-## Area 14: Output Review
-
-### [OUTPUT] REST responses are minified JSON with no pretty-print option
-
-- **Severity**: UX-polish
-- **What happens**: All REST responses are compact single-line JSON. GCP's API supports `?prettyPrint=true` to opt into formatted output.
-- **Expected**: Support `?prettyPrint=true` query parameter (matching GCP API conventions), or document that `| jq .` is the recommended local pattern. The README Quick Start shows bare `curl` commands with no formatting suggestion.
-- **Repro**: `curl -s "http://localhost:8085/v1/projects/my-project/locations/us-central1/providers"` — single-line output.
-
----
-
-### [OUTPUT] `--help` displays single-dash flags while README uses double-dash
-
-- **Severity**: UX-polish
-- **What happens**: `--help` shows `-grpc-port`, `-http-port`, `-log-level` (Go `flag` package default, single dash). The README shows `--grpc-port`, `--log-level` (double dash). Both work, but the inconsistency can confuse users copying from one source.
-- **Expected**: Either update `--help` to display double-dash flags (via a custom `flag.Usage`) or add a note that `-flag` and `--flag` are equivalent.
-- **Repro**: `go run ./cmd/server-dual --help` (shows `-grpc-port`) vs README (shows `--grpc-port`).
-
----
-
-*End of audit report.*
+  The `server` banner line also omits the `(gRPC + REST)` / `(gRPC-only)` suffix seen in `server-dual`. The `"Publisher service registered"` line appears only in `server`, not `server-dual`, even though both expose the Publisher service.
+- **Expected**: Startup log lines should follow a consistent structure across server variants with variant-appropriate protocol labels. The banner line should include the protocol suffix for all variants.
+- **Repro**:
+  ```
+  go run ./cmd/server
+  go run ./cmd/server-dual
+  # Compare startup log structure — different terminology throughout
+  ```

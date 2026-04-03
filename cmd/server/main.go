@@ -134,7 +134,7 @@ func main() {
 	//   - longrunningpb.OperationsServer (LRO polling)
 	//   - publishingpb.PublisherServer (event publishing)
 	//   - grpc/reflection
-	grpcServer := server.NewGRPCServer(srv, pub)
+	grpcServer := server.NewGRPCServer(srv, pub, lgr)
 
 	lgr.Info("Server listening at %v", lis.Addr())
 	lgr.Info("Ready to accept connections")

@@ -126,7 +126,7 @@ func main() {
 	pub := publisher.NewServer(rtr, dsp, srv.Storage(), lgr)
 
 	// Create the shared gRPC server with all services registered
-	grpcSrv := server.NewGRPCServer(srv, pub)
+	grpcSrv := server.NewGRPCServer(srv, pub, lgr)
 
 	// Start gRPC server in background (internal only — not exposed to clients)
 	go func() {

@@ -169,7 +169,35 @@ Note:
 
 ---
 
-### 4. LRO REST Gateway
+### 4. Health Endpoints
+
+Verify the `/healthz` and `/readyz` readiness endpoints respond correctly.
+
+```
+cd /Users/dayna.blackwell/code/gcp-eventarc-emulator && go run ./cmd/server-dual > /tmp/emulator.log 2>&1 &
+sleep 2
+
+curl -s -w "\nHTTP %{http_code}\n" http://localhost:8085/healthz
+curl -s -w "\nHTTP %{http_code}\n" http://localhost:8085/readyz
+
+# Should return 404 on gRPC-only server
+go run ./cmd/server > /tmp/emulator-grpc.log 2>&1 &
+sleep 2
+curl -s -w "\nHTTP %{http_code}\n" http://localhost:9085/healthz 2>&1 || true
+kill %2 2>/dev/null
+
+kill %1 2>/dev/null
+```
+
+Note:
+- Do both `/healthz` and `/readyz` return HTTP 200?
+- Is the response body `{"status":"ok"}` or similar structured JSON?
+- Does the gRPC-only server NOT expose these endpoints (expected — no HTTP port)?
+- Is there any mention of these endpoints in the README or `--help` text?
+
+---
+
+### 6. LRO REST Gateway
 
 All Create/Update/Delete operations return Long-Running Operations. Verify the LRO REST endpoint at `/v1/operations/{name}` is accessible and returns the expected structure.
 
@@ -219,7 +247,7 @@ Note:
 
 ---
 
-### 5. Event Publishing and Routing
+### 7. Event Publishing and Routing
 
 Test the full CloudEvent delivery loop: publish → route → dispatch → HTTP delivery in binary content mode. The webhook receiver at `examples/webhook-receiver` must be running.
 
@@ -309,7 +337,7 @@ Note:
 
 ---
 
-### 6. Channel Validation — Publishing to Nonexistent Channel
+### 8. Channel Validation — Publishing to Nonexistent Channel
 
 Verify that publishing to a channel that does not exist returns a clear NOT_FOUND error.
 
@@ -344,7 +372,7 @@ Note:
 
 ---
 
-### 7. Trigger Validation — Creating Without Required Fields
+### 9. Trigger Validation — Creating Without Required Fields
 
 Verify that creating a trigger without a destination, creating a duplicate, or supplying an empty parent returns a clear INVALID_ARGUMENT or ALREADY_EXISTS error.
 
@@ -401,7 +429,7 @@ Note:
 
 ---
 
-### 8. gRPC API — Core Operations via grpcurl
+### 10. gRPC API — Core Operations via grpcurl
 
 Verify the gRPC surface is accessible, reflection is enabled, and core operations work.
 
@@ -467,7 +495,7 @@ Note:
 
 ---
 
-### 9. SDK Demo
+### 11. SDK Demo
 
 Run the Go SDK demo end-to-end using the real `cloud.google.com/go/eventarc` client library. The webhook receiver must be running to catch the dispatched event. Note: the sdk-demo publishes to a channel named `my-channel` which it does not create itself — create it via REST first.
 
@@ -509,7 +537,7 @@ Note:
 
 ---
 
-### 10. Env Vars — EVENTARC_EMULATOR_TOKEN and IAM_MODE
+### 12. Env Vars — EVENTARC_EMULATOR_TOKEN and IAM_MODE
 
 **Token injection (EVENTARC_EMULATOR_TOKEN):**
 
@@ -603,7 +631,7 @@ Note:
 
 ---
 
-### 11. Log Level Flag
+### 13. Log Level Flag
 
 Verify the `--log-level` flag and `GCP_MOCK_LOG_LEVEL` env var work correctly, and that invalid values fail cleanly.
 
@@ -656,7 +684,7 @@ Note:
 
 ---
 
-### 12. Edge Cases and Error Handling
+### 14. Edge Cases and Error Handling
 
 Test boundary behavior for both the server binary and the REST API.
 
@@ -738,7 +766,7 @@ Note:
 
 ---
 
-### 13. Test Suite
+### 15. Test Suite
 
 Run the test suite to see what baseline coverage exists and whether tests pass cleanly.
 
@@ -761,7 +789,7 @@ Note:
 
 ---
 
-### 14. Output Review
+### 16. Output Review
 
 Evaluate the visual quality and consistency of all output across the tool.
 

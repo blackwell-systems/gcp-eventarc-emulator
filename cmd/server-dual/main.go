@@ -124,7 +124,7 @@ func main() {
 	pub := publisher.NewServer(rtr, dsp, srv.Storage(), lgr)
 
 	// Create the shared gRPC server with all services registered
-	grpcSrv := server.NewGRPCServer(srv, pub)
+	grpcSrv := server.NewGRPCServer(srv, pub, lgr)
 
 	// readyCh is closed by the gRPC goroutine once it is listening, so that the
 	// main goroutine can print "Ready" only after gRPC is confirmed serving.
