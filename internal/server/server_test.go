@@ -31,6 +31,9 @@ func minimalTrigger() *eventarcpb.Trigger {
 				},
 			},
 		},
+		EventFilters: []*eventarcpb.EventFilter{
+			{Attribute: "type", Value: "google.cloud.pubsub.topic.v1.messagePublished"},
+		},
 	}
 }
 
@@ -570,5 +573,75 @@ func TestCreateGoogleApiSource_Success(t *testing.T) {
 	}
 	if src.GetName() != parent+"/googleApiSources/my-source" {
 		t.Errorf("unexpected google api source name: %s", src.GetName())
+	}
+}
+
+// -------------------------------------------------------------------------
+// TestCreateTrigger_NoDestination
+// -------------------------------------------------------------------------
+
+// TestCreateTrigger_NoDestination verifies that CreateTrigger returns
+// InvalidArgument when the trigger has no destination set.
+func TestCreateTrigger_NoDestination(t *testing.T) {
+	ctx := context.Background()
+	srv := newTestServer(t)
+
+	req := &eventarcpb.CreateTriggerRequest{
+		Parent:    "projects/p/locations/l",
+		TriggerId: "t1",
+		Trigger: &eventarcpb.Trigger{
+			EventFilters: []*eventarcpb.EventFilter{
+				{Attribute: "type", Value: "google.cloud.pubsub.topic.v1.messagePublished"},
+			},
+		},
+	}
+
+	_, err := srv.CreateTrigger(ctx, req)
+	if err == nil {
+		t.Fatal("expected InvalidArgument error, got nil")
+	}
+	st, ok := status.FromError(err)
+	if !ok {
+		t.Fatalf("expected gRPC status error, got: %v", err)
+	}
+	if st.Code() != codes.InvalidArgument {
+		t.Errorf("expected InvalidArgument, got %v", st.Code())
+	}
+}
+
+// -------------------------------------------------------------------------
+// TestCreateTrigger_NoEventFilters
+// -------------------------------------------------------------------------
+
+// TestCreateTrigger_NoEventFilters verifies that CreateTrigger returns
+// InvalidArgument when the trigger has no event_filters.
+func TestCreateTrigger_NoEventFilters(t *testing.T) {
+	ctx := context.Background()
+	srv := newTestServer(t)
+
+	req := &eventarcpb.CreateTriggerRequest{
+		Parent:    "projects/p/locations/l",
+		TriggerId: "t2",
+		Trigger: &eventarcpb.Trigger{
+			Destination: &eventarcpb.Destination{
+				Descriptor_: &eventarcpb.Destination_HttpEndpoint{
+					HttpEndpoint: &eventarcpb.HttpEndpoint{
+						Uri: "http://localhost:8080/event",
+					},
+				},
+			},
+		},
+	}
+
+	_, err := srv.CreateTrigger(ctx, req)
+	if err == nil {
+		t.Fatal("expected InvalidArgument error, got nil")
+	}
+	st, ok := status.FromError(err)
+	if !ok {
+		t.Fatalf("expected gRPC status error, got: %v", err)
+	}
+	if st.Code() != codes.InvalidArgument {
+		t.Errorf("expected InvalidArgument, got %v", st.Code())
 	}
 }

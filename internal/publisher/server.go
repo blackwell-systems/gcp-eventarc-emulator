@@ -18,8 +18,16 @@ import (
 	eventarcpb "cloud.google.com/go/eventarc/apiv1/eventarcpb"
 	publishingpb "cloud.google.com/go/eventarc/publishing/apiv1/publishingpb"
 	cloudevents "github.com/cloudevents/sdk-go/v2"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/anypb"
 )
+
+// ChannelChecker is the interface needed by the publisher to validate
+// that a channel exists before routing events to it.
+type ChannelChecker interface {
+	GetChannelExists(ctx context.Context, channelName string) (bool, error)
+}
 
 // RouterMatcher is the interface subset of *router.Router needed by the publisher.
 // Using an interface avoids an import cycle: publisher→router→server→publisher.
@@ -37,13 +45,15 @@ type Server struct {
 	publishingpb.UnimplementedPublisherServer
 	router     RouterMatcher
 	dispatcher EventDispatcher
+	channels   ChannelChecker
 }
 
 // NewServer creates a new publisher Server.
-func NewServer(router RouterMatcher, dispatcher EventDispatcher) *Server {
+func NewServer(router RouterMatcher, dispatcher EventDispatcher, channels ChannelChecker) *Server {
 	return &Server{
 		router:     router,
 		dispatcher: dispatcher,
+		channels:   channels,
 	}
 }
 
@@ -52,6 +62,18 @@ func NewServer(router RouterMatcher, dispatcher EventDispatcher) *Server {
 // location, and dispatches to every matching trigger.
 // Errors per-event or per-dispatch are logged but do not fail the RPC.
 func (s *Server) PublishEvents(ctx context.Context, req *publishingpb.PublishEventsRequest) (*publishingpb.PublishEventsResponse, error) {
+	if req.GetChannel() != "" {
+		exists, err := s.channels.GetChannelExists(ctx, req.GetChannel())
+		if err != nil {
+			return nil, status.Errorf(codes.Internal, "channel lookup failed: %v", err)
+		}
+		if !exists {
+			return nil, status.Errorf(codes.NotFound, "Channel %q not found", req.GetChannel())
+		}
+	}
+	if len(req.GetEvents()) == 0 {
+		log.Printf("publisher: PublishEvents called with 0 events for channel=%s", req.GetChannel())
+	}
 	parent := parentFromChannel(req.GetChannel())
 	s.processAnySlice(ctx, parent, req.GetEvents())
 	return &publishingpb.PublishEventsResponse{}, nil
@@ -91,6 +113,10 @@ func (s *Server) matchAndDispatch(ctx context.Context, parent string, event clou
 	if err != nil {
 		log.Printf("publisher: router.Match error (parent=%s): %v", parent, err)
 		return
+	}
+	if len(triggers) > 0 {
+		log.Printf("publisher: %d trigger(s) matched for parent=%s type=%s",
+			len(triggers), parent, event.Type())
 	}
 	for _, t := range triggers {
 		statusCode, err := s.dispatcher.Dispatch(ctx, t, event)

@@ -7,10 +7,18 @@ import (
 	eventarcpb "cloud.google.com/go/eventarc/apiv1/eventarcpb"
 	publishingpb "cloud.google.com/go/eventarc/publishing/apiv1/publishingpb"
 	cloudevents "github.com/cloudevents/sdk-go/v2"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/anypb"
 )
 
 // --- mock implementations ---
+
+type fakeChannelChecker struct{ exists bool }
+
+func (f *fakeChannelChecker) GetChannelExists(_ context.Context, _ string) (bool, error) {
+	return f.exists, nil
+}
 
 type mockRouter struct {
 	triggers   []*eventarcpb.Trigger
@@ -72,7 +80,7 @@ func TestPublishEvents_MatchingTrigger_Dispatches(t *testing.T) {
 	rtr := &mockRouter{triggers: []*eventarcpb.Trigger{trigger}}
 	dsp := &mockDispatcher{statusCode: 200}
 
-	srv := NewServer(rtr, dsp)
+	srv := NewServer(rtr, dsp, &fakeChannelChecker{exists: true})
 
 	req := &publishingpb.PublishEventsRequest{
 		Channel: "projects/p/locations/l/channels/c",
@@ -105,7 +113,7 @@ func TestPublishEvents_NoMatchingTriggers_ReturnsEmpty(t *testing.T) {
 	rtr := &mockRouter{triggers: nil}
 	dsp := &mockDispatcher{statusCode: 200}
 
-	srv := NewServer(rtr, dsp)
+	srv := NewServer(rtr, dsp, &fakeChannelChecker{exists: true})
 
 	req := &publishingpb.PublishEventsRequest{
 		Channel: "projects/p/locations/l/channels/c",
@@ -133,7 +141,7 @@ func TestPublishChannelConnectionEvents_Dispatches(t *testing.T) {
 	rtr := &mockRouter{triggers: []*eventarcpb.Trigger{trigger}}
 	dsp := &mockDispatcher{statusCode: 200}
 
-	srv := NewServer(rtr, dsp)
+	srv := NewServer(rtr, dsp, &fakeChannelChecker{exists: true})
 
 	req := &publishingpb.PublishChannelConnectionEventsRequest{
 		ChannelConnection: "projects/partner/locations/us-central1/channelConnections/conn1",
@@ -154,5 +162,55 @@ func TestPublishChannelConnectionEvents_Dispatches(t *testing.T) {
 	}
 	if rtr.lastParent != "projects/partner/locations/us-central1" {
 		t.Errorf("router called with wrong parent: got %s, want projects/partner/locations/us-central1", rtr.lastParent)
+	}
+}
+
+// TestPublishEvents_ChannelNotFound verifies that PublishEvents returns NOT_FOUND
+// when the ChannelChecker reports the channel does not exist.
+func TestPublishEvents_ChannelNotFound(t *testing.T) {
+	rtr := &mockRouter{}
+	dsp := &mockDispatcher{statusCode: 200}
+	srv := NewServer(rtr, dsp, &fakeChannelChecker{exists: false})
+
+	req := &publishingpb.PublishEventsRequest{
+		Channel: "projects/p/locations/l/channels/missing",
+		Events: []*anypb.Any{
+			makeProtoCloudEvent(t, "google.cloud.pubsub.topic.v1.messagePublished", "//pubsub.googleapis.com/projects/p/topics/t", ""),
+		},
+	}
+
+	_, err := srv.PublishEvents(context.Background(), req)
+	if err == nil {
+		t.Fatal("expected NOT_FOUND error, got nil")
+	}
+	st, ok := status.FromError(err)
+	if !ok {
+		t.Fatalf("expected gRPC status error, got: %v", err)
+	}
+	if st.Code() != codes.NotFound {
+		t.Errorf("expected code NotFound, got %v", st.Code())
+	}
+}
+
+// TestPublishEvents_ChannelExists verifies that PublishEvents succeeds when
+// the ChannelChecker confirms the channel exists.
+func TestPublishEvents_ChannelExists(t *testing.T) {
+	rtr := &mockRouter{}
+	dsp := &mockDispatcher{statusCode: 200}
+	srv := NewServer(rtr, dsp, &fakeChannelChecker{exists: true})
+
+	req := &publishingpb.PublishEventsRequest{
+		Channel: "projects/p/locations/l/channels/existing",
+		Events: []*anypb.Any{
+			makeProtoCloudEvent(t, "google.cloud.pubsub.topic.v1.messagePublished", "//pubsub.googleapis.com/projects/p/topics/t", ""),
+		},
+	}
+
+	resp, err := srv.PublishEvents(context.Background(), req)
+	if err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+	if resp == nil {
+		t.Fatal("expected non-nil response")
 	}
 }

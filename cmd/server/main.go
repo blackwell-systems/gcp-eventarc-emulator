@@ -57,7 +57,7 @@ func main() {
 	dsp := dispatcher.NewDispatcher(nil)
 
 	// Create publisher gRPC service
-	pub := publisher.NewServer(rtr, dsp)
+	pub := publisher.NewServer(rtr, dsp, srv.Storage())
 	log.Printf("Publisher service registered")
 
 	// Create the shared gRPC server with all services registered:
