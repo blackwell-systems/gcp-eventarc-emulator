@@ -9,6 +9,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`/healthz` and `/readyz` endpoints** — REST gateway (`server-rest`, `server-dual`) now exposes `GET /healthz` and `GET /readyz`; both return `{"status":"ok"}` with HTTP 200, giving CI scripts and container orchestrators a machine-readable readiness signal
+- **Leveled logger** (`internal/logger`) — New `Logger` type with `Debug`/`Info`/`Warn`/`Error` methods and `IsDebug() bool`; all three server binaries now propagate `--log-level` to the router, dispatcher, and publisher via variadic constructors so `--log-level debug` actually produces debug output
+- **Port range validation** — `--grpc-port` and `--http-port` flags are now validated to be in the 1–65535 range; out-of-range values exit with a descriptive error message
+- **`--help` binary blurbs** — Each server binary's `--help` output now includes a "When to use:" line distinguishing `server`, `server-rest`, and `server-dual`
+- **`grpcurl` Quick Start tip** — README now includes a "Verify gRPC connectivity" sub-section with the `grpcurl list` command and install link
+- **jq pretty-print tip** — README's first curl example now shows the `| jq .` pipe for readable JSON output
+- **Backward-compatibility env var note** — Environment variable table now documents that `IAM_MODE` and `GCP_MOCK_LOG_LEVEL` are accepted alongside the newer prefixed forms
+- **Makefile `test-race` and `test-integration` targets** — `make test-race` runs `go test -race ./...`; `make test-integration` runs `go test -run Integration ./...`
+
+### Fixed
+
+- **LRO project-scoped GET path** — `GET /v1/projects/{project}/locations/{location}/operations/{name}` now routes correctly; previously the REST gateway only registered `/v1/operations/{name}` so project-scoped LRO polls (the default SDK path) returned 404
+- **LRO LIST 404** — `GET /v1/projects/{project}/locations/{location}/operations` now returns the operations list; previously this path was unregistered
+- **IAM permissive allows unauthenticated** — `checkPermission` now returns `PERMISSION_DENIED` when the request carries no principal, even in `permissive` mode; previously an empty principal was forwarded to the IAM emulator which returned allowed=true
+- **`--log-level debug` had no effect** — Debug log calls in the router, dispatcher, and publisher were unconditional `log.Printf` calls; they now go through the leveled logger and are gated on the configured level
+- **Delete LRO response type (all 7 operations)** — All `Delete*` methods now return `google.protobuf.Empty` in the LRO response; previously they returned the deleted resource, which caused SDK `Wait()` to fail unmarshalling
+- **`CreateTrigger` multi-error validation** — Field violations for missing `destination` and `event_filters` are now returned together in a single `INVALID_ARGUMENT` with `BadRequest` details; previously only one error was returned
+- **LRO error message format** — `GetOperation` and `DeleteOperation` not-found errors now use `[name]` bracket format instead of `%q` quoted format, matching real GCP API style
+- **README RPC count** — Fixed "40 RPCs" → "47 RPCs" in the README introduction paragraph
+- **Single-dash vs double-dash flag note** — README Run Server section now notes that Go flags accept both `-flag` and `--flag`
+- **`--version` includes binary name** — `--version` output now appends `(server)`, `(server-rest)`, or `(server-dual)` to distinguish binaries
+
 - **Docker support** — Multi-stage `Dockerfile` (~17MB final image) and `docker-compose.yml` wiring the emulator with a webhook receiver for one-command local demos
 - **SDK demo** (`examples/sdk-demo`) — End-to-end example using the official `cloud.google.com/go/eventarc` and `cloud.google.com/go/eventarc/publishing` SDK clients against the emulator; proves drop-in compatibility without GCP credentials
 - **curl demo** (`examples/demo.sh`) — Shell script demonstrating the full event flow via REST: providers, channels, triggers, message buses, pipelines, enrollments, and CloudEvent publish → delivery
