@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-04-03
+
 ### Added
 - `Register()` composition hook for unified `gcp-emulator`
 - `NewGatewayHandler()` for mounting Eventarc REST gateway in unified HTTP server
@@ -66,4 +68,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **"Ready" log fires after listener confirms serving** — All three binaries use a `readyCh` channel; "Ready" only appears after the listener is confirmed up
 - **Startup banner respects `--log-level`** — Banner now uses `lgr.Info` so `--log-level error` suppresses it
 
+[Unreleased]: https://github.com/blackwell-systems/gcp-eventarc-emulator/compare/v0.1.2...HEAD
+[0.1.2]: https://github.com/blackwell-systems/gcp-eventarc-emulator/compare/v0.1.0...v0.1.2
 [0.1.0]: https://github.com/blackwell-systems/gcp-eventarc-emulator/releases/tag/v0.1.0
