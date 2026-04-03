@@ -38,7 +38,8 @@ func (s *Storage) CreateChannel(ctx context.Context, parent, channelID string, c
 	stored.Uid = uid
 	stored.CreateTime = now
 	stored.UpdateTime = now
-	stored.State = eventarcpb.Channel_ACTIVE
+	stored.State = eventarcpb.Channel_PENDING
+	stored.ActivationToken = newUID()
 
 	s.channels[name] = stored
 	return cloneProto(stored), nil
@@ -157,6 +158,7 @@ func (s *Storage) CreateChannelConnection(ctx context.Context, parent, connID st
 	uid := newUID()
 
 	stored := cloneProto(conn)
+	stored.ActivationToken = ""
 	stored.Name = name
 	stored.Uid = uid
 	stored.CreateTime = now
@@ -222,18 +224,29 @@ func (s *Storage) ListChannelConnections(ctx context.Context, parent string, pag
 // -------------------------------------------------------------------------
 
 // GetGoogleChannelConfig returns the config for the given full resource name.
-// If no config has been stored yet, returns a zero-value config (never NotFound).
+// If no config has been stored yet, initializes a stable default (update_time
+// is set once and never regenerated). Uses double-checked locking to avoid
+// a race between the read-path miss and the write-path initialization.
 func (s *Storage) GetGoogleChannelConfig(ctx context.Context, name string) (*eventarcpb.GoogleChannelConfig, error) {
 	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	if stored, exists := s.googleChannelConfigs[name]; exists {
+	stored, exists := s.googleChannelConfigs[name]
+	s.mu.RUnlock()
+	if exists {
 		return cloneProto(stored), nil
 	}
-	return &eventarcpb.GoogleChannelConfig{
+	// Initialize stable default on first access.
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	// Double-check after acquiring write lock.
+	if stored, exists = s.googleChannelConfigs[name]; exists {
+		return cloneProto(stored), nil
+	}
+	defaultCfg := &eventarcpb.GoogleChannelConfig{
 		Name:       name,
 		UpdateTime: timestamppb.Now(),
-	}, nil
+	}
+	s.googleChannelConfigs[name] = defaultCfg
+	return cloneProto(defaultCfg), nil
 }
 
 // UpdateGoogleChannelConfig applies the fields specified in mask to the stored
@@ -244,6 +257,9 @@ func (s *Storage) UpdateGoogleChannelConfig(ctx context.Context, cfg *eventarcpb
 	defer s.mu.Unlock()
 
 	name := cfg.GetName()
+	if name == "" {
+		return nil, status.Errorf(codes.InvalidArgument, "google_channel_config.name is required")
+	}
 	stored, exists := s.googleChannelConfigs[name]
 	if !exists {
 		stored = &eventarcpb.GoogleChannelConfig{Name: name}
@@ -255,6 +271,9 @@ func (s *Storage) UpdateGoogleChannelConfig(ctx context.Context, cfg *eventarcpb
 			case "crypto_key_name":
 				stored.CryptoKeyName = cfg.GetCryptoKeyName()
 			case "labels":
+				stored.Labels = cfg.GetLabels()
+			case "*":
+				stored.CryptoKeyName = cfg.GetCryptoKeyName()
 				stored.Labels = cfg.GetLabels()
 			}
 		}
