@@ -80,39 +80,6 @@ func TestGetPermission_UnknownOperation(t *testing.T) {
 	}
 }
 
-func TestNormalizeTriggerResource(t *testing.T) {
-	tests := []struct {
-		name  string
-		input string
-		want  string
-	}{
-		{
-			name:  "FullTriggerName",
-			input: "projects/my-project/locations/us-central1/triggers/my-trigger",
-			want:  "projects/my-project/locations/us-central1/triggers/my-trigger",
-		},
-		{
-			name:  "EmptyString",
-			input: "",
-			want:  "",
-		},
-		{
-			name:  "PartialName",
-			input: "projects/my-project/locations/us-central1/triggers/",
-			want:  "projects/my-project/locations/us-central1/triggers/",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := NormalizeTriggerResource(tt.input)
-			if got != tt.want {
-				t.Errorf("NormalizeTriggerResource(%q) = %q, want %q", tt.input, got, tt.want)
-			}
-		})
-	}
-}
-
 func TestNormalizeParentForCreate(t *testing.T) {
 	tests := []struct {
 		name  string

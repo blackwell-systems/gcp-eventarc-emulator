@@ -69,9 +69,3 @@ func GetPermission(operation string) (PermissionCheck, bool) {
 func NormalizeParentForCreate(parent string) string {
 	return strings.TrimRight(parent, "/")
 }
-
-// NormalizeTriggerResource returns the trigger resource name for IAM checks.
-// The name is returned as-is; this function is a hook for any future normalization.
-func NormalizeTriggerResource(name string) string {
-	return name
-}
