@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-04-03
+
+### Fixed
+- **LRO metadata always nil** — All 20 Create/Update/Delete operations now pack `OperationMetadata` with `create_time`, `end_time`, `target`, `verb`, and `api_version` fields
+- **Etag never validated on Delete** — DeleteTrigger, DeleteMessageBus, DeleteEnrollment, DeletePipeline, DeleteGoogleApiSource now return `ABORTED` if the provided etag doesn't match the stored resource
+- **`allow_missing` ignored** — Update methods now upsert (create if not found) when `allow_missing=true`; Delete methods return success if not found when `allow_missing=true`
+- **`match-path-pattern` uses exact match** — EventFilter operator `match-path-pattern` now implements proper glob semantics with `**` (any path sequence) and `*` (single segment)
+- **`validate_only` silently ignored** — All 18 mutating RPCs now validate the request and return success without persisting when `validate_only=true`
+- **Trigger etag never set** — `CreateTrigger` and `UpdateTrigger` now generate and store etag values
+- **Channel initial state was ACTIVE** — Newly created channels now have `State: PENDING` and generate an `activation_token`; `CreateChannelConnection` clears the token (input-only field)
+- **`GoogleChannelConfig.update_time` unstable** — `update_time` is now initialized once at first access and remains stable across subsequent Gets
+- **Wildcard update mask `"*"` ignored** — All Update methods (Trigger, MessageBus, Enrollment, Pipeline, GoogleApiSource, GoogleChannelConfig) now treat `"*"` as updating all mutable fields
+- **`Enrollment.message_bus` mutable** — Explicitly attempting to update `message_bus` via update mask now returns `INVALID_ARGUMENT` (immutable after creation)
+- **Missing required field validation** — `CreateEnrollment` validates `cel_match`; `CreatePipeline` validates `destinations`; `CreateGoogleApiSource` validates `destination`
+
+### Added
+- `matchPathPattern` and `matchSegs` functions in router for glob path filter evaluation
+- 27 new router unit tests covering edge cases for path pattern matching
+
 ## [0.1.2] - 2026-04-03
 
 ### Added

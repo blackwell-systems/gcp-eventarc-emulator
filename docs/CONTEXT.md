@@ -11,3 +11,5 @@
   - IMPL doc: docs/IMPL/complete/IMPL-audit-fixes-round2.yaml
 - **refactor-dedup**: completed 2026-04-02, 1 waves, 5 agents
   - IMPL doc: docs/IMPL/complete/IMPL-refactor-dedup.yaml
+- **conformance-fixes**: completed 2026-04-03, 2 waves, 5 agents
+  - IMPL doc: docs/IMPL/complete/IMPL-conformance-fixes.yaml

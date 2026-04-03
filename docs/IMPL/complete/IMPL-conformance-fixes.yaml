@@ -1,3 +1,4 @@
+completion_date: "2026-04-03"
 title: GCP Eventarc API Conformance Fixes
 feature_slug: conformance-fixes
 verdict: SUITABLE
@@ -1022,6 +1023,7 @@ waves:
             - internal/server/server_test.go
           dependencies:
             - A
+          context_source: prepared-brief
 quality_gates:
     level: standard
     gates:
@@ -1047,6 +1049,29 @@ completion_reports:
             - TestCreateDone_VerbDelete
         verification: PASS
         notes: 'CreateDone updated with verb/target params and OperationMetadata packing. lro package builds, vets, and tests clean. Out-of-scope dependency: internal/server/server.go callers of CreateDone need to pass the new verb+target args — this is the integration agent''s responsibility.'
+    B:
+        status: complete
+        branch: main
+        commit: b3dbd7f
+        files_changed:
+            - internal/server/server.go
+            - internal/server/server_test.go
+            - integration_test.go
+        tests_added:
+            - TestCreateTrigger_ValidateOnly
+            - TestLROMetadata_Create
+            - TestDeleteTrigger_EtagMismatch
+            - TestDeleteTrigger_EtagMatch
+            - TestDeleteTrigger_AllowMissing
+            - TestUpdateTrigger_AllowMissing
+            - TestDeleteMessageBus_EtagMismatch
+            - TestDeleteMessageBus_AllowMissing
+            - TestUpdateMessageBus_AllowMissing
+            - TestCreateEnrollment_MissingCelMatch
+            - TestCreatePipeline_MissingDestinations
+            - TestCreateGoogleApiSource_MissingDestination
+        verification: PASS
+        notes: All 6 fix groups implemented. 12 new tests added. integration_test.go updated (unowned but needed for go test ./... to pass - pipeline required field now enforced). All tests in internal/server pass. Full go test ./... green.
     C:
         status: complete
         branch: saw/conformance-fixes/wave1-agent-C
@@ -1175,5 +1200,5 @@ critic_report:
     summary: 'All 6 checks pass. Warning resolved: added internal/router/match_test.go to Agent D file_ownership.'
     reviewed_at: "2026-04-03T18:11:14Z"
     issue_count: 0
-state: REVIEWED
+state: COMPLETE
 injection_method: hook
