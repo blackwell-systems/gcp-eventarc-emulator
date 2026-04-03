@@ -12,6 +12,18 @@
         "cached_at": "2026-04-02T00:15:27.257566-07:00"
       }
     },
+    "007f7dcebbb04153e60316f19e7a40f3": {
+      "lint": {
+        "gate_type": "lint",
+        "command": "go vet ./...",
+        "passed": true,
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": "",
+        "from_cache": true,
+        "cached_at": "2026-04-02T20:07:06.375272-07:00"
+      }
+    },
     "068dd85331371a4c061b3986ffd4bb62": {
       "test": {
         "gate_type": "test",
@@ -312,6 +324,30 @@
         "cached_at": "2026-04-02T18:36:49.961544-07:00"
       }
     },
+    "50efc08e359117718a4f42a13c735549": {
+      "test": {
+        "gate_type": "test",
+        "command": "go test ./...",
+        "passed": true,
+        "exit_code": 0,
+        "stdout": "ok  \tgithub.com/blackwell-systems/gcp-eventarc-emulator\t(cached)\n?   \tgithub.com/blackwell-systems/gcp-eventarc-emulator/cmd/server\t[no test files]\n?   \tgithub.com/blackwell-systems/gcp-eventarc-emulator/cmd/server-dual\t[no test files]\n?   \tgithub.com/blackwell-systems/gcp-eventarc-emulator/cmd/server-rest\t[no test files]\nok  \tgithub.com/blackwell-systems/gcp-eventarc-emulator/internal/authz\t(cached)\nok  \tgithub.com/blackwell-systems/gcp-eventarc-emulator/internal/dispatcher\t(cached)\nok  \tgithub.com/blackwell-systems/gcp-eventarc-emulator/internal/gateway\t(cached)\n?   \tgithub.com/blackwell-systems/gcp-eventarc-emulator/internal/gen/google/cloud/eventarc/publishing/v1\t[no test files]\n?   \tgithub.com/blackwell-systems/gcp-eventarc-emulator/internal/gen/google/cloud/eventarc/v1\t[no test files]\n?   \tgithub.com/blackwell-systems/gcp-eventarc-emulator/internal/gen/google/longrunning\t[no test files]\nok  \tgithub.com/blackwell-systems/gcp-eventarc-emulator/internal/lro\t(cached)\nok  \tgithub.com/blackwell-systems/gcp-eventarc-emulator/internal/publisher\t(cached)\nok  \tgithub.com/blackwell-systems/gcp-eventarc-emulator/internal/router\t(cached)\nok  \tgithub.com/blackwell-systems/gcp-eventarc-emulator/internal/server\t(cached)\n",
+        "stderr": "",
+        "from_cache": true,
+        "cached_at": "2026-04-02T19:38:54.196647-07:00"
+      }
+    },
+    "5dba2c54c3aefa915a3ab2fd631ad211": {
+      "test": {
+        "gate_type": "test",
+        "command": "go test ./...",
+        "passed": true,
+        "exit_code": 0,
+        "stdout": "ok  \tgithub.com/blackwell-systems/gcp-eventarc-emulator\t(cached)\n?   \tgithub.com/blackwell-systems/gcp-eventarc-emulator/cmd/server\t[no test files]\n?   \tgithub.com/blackwell-systems/gcp-eventarc-emulator/cmd/server-dual\t[no test files]\n?   \tgithub.com/blackwell-systems/gcp-eventarc-emulator/cmd/server-rest\t[no test files]\nok  \tgithub.com/blackwell-systems/gcp-eventarc-emulator/internal/authz\t(cached)\nok  \tgithub.com/blackwell-systems/gcp-eventarc-emulator/internal/dispatcher\t(cached)\nok  \tgithub.com/blackwell-systems/gcp-eventarc-emulator/internal/gateway\t(cached)\n?   \tgithub.com/blackwell-systems/gcp-eventarc-emulator/internal/gen/google/cloud/eventarc/publishing/v1\t[no test files]\n?   \tgithub.com/blackwell-systems/gcp-eventarc-emulator/internal/gen/google/cloud/eventarc/v1\t[no test files]\n?   \tgithub.com/blackwell-systems/gcp-eventarc-emulator/internal/gen/google/longrunning\t[no test files]\nok  \tgithub.com/blackwell-systems/gcp-eventarc-emulator/internal/lro\t(cached)\nok  \tgithub.com/blackwell-systems/gcp-eventarc-emulator/internal/publisher\t(cached)\nok  \tgithub.com/blackwell-systems/gcp-eventarc-emulator/internal/router\t(cached)\nok  \tgithub.com/blackwell-systems/gcp-eventarc-emulator/internal/server\t(cached)\n",
+        "stderr": "",
+        "from_cache": true,
+        "cached_at": "2026-04-02T20:07:06.783622-07:00"
+      }
+    },
     "614d52c56866bf9884e83ec2a9550c8b": {
       "build": {
         "gate_type": "build",
@@ -528,6 +564,18 @@
         "cached_at": "2026-04-02T18:35:39.6098-07:00"
       }
     },
+    "bd8f0f5cb3fc967d56ba86cb6874a564": {
+      "lint": {
+        "gate_type": "lint",
+        "command": "go vet ./...",
+        "passed": true,
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": "",
+        "from_cache": true,
+        "cached_at": "2026-04-02T19:38:53.769638-07:00"
+      }
+    },
     "c27894367786f1aa28ca5b869c10712c": {
       "build": {
         "gate_type": "build",
@@ -574,6 +622,18 @@
         "stderr": "",
         "from_cache": true,
         "cached_at": "2026-04-02T15:01:35.047024-07:00"
+      }
+    },
+    "dbb013adcff2fd1359b444c854ec07bc": {
+      "build": {
+        "gate_type": "build",
+        "command": "go build ./...",
+        "passed": true,
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": "",
+        "from_cache": true,
+        "cached_at": "2026-04-02T19:38:53.274194-07:00"
       }
     },
     "dd1748ba133a095abe5010524e519b95": {
@@ -646,6 +706,18 @@
         "stderr": "",
         "from_cache": true,
         "cached_at": "2026-04-02T00:06:20.697596-07:00"
+      }
+    },
+    "efc42da392d4459b17d49a19ed345180": {
+      "build": {
+        "gate_type": "build",
+        "command": "go build ./...",
+        "passed": true,
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": "",
+        "from_cache": true,
+        "cached_at": "2026-04-02T20:07:05.87014-07:00"
       }
     }
   }

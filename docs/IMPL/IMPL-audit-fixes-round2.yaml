@@ -1024,13 +1024,7 @@ completion_reports:
             - TestCreateTrigger_TriggerIdCamelCase
             - TestCreateDone_WithEmpty
         verification: PASS
-        notes: >-
-            All 7 Delete* methods now return emptypb.Empty in LRO response.
-            CreateTrigger collects all field violations and returns them together via
-            BadRequest details. triggerId camelCase fix applied. checkPermission denies
-            empty-principal requests in permissive mode. go test ./internal/server/... ./internal/lro/... passes.
-            Fixed by Orchestrator: unused variable declarations in Delete methods (fetched resource
-            but no longer passed to CreateDone) changed to _ assignments.
+        notes: 'All 7 Delete* methods now return emptypb.Empty in LRO response. CreateTrigger collects all field violations and returns them together via BadRequest details. triggerId camelCase fix applied. checkPermission denies empty-principal requests in permissive mode. go test ./internal/server/... ./internal/lro/... passes. Fixed by Orchestrator: unused variable declarations in Delete methods (fetched resource but no longer passed to CreateDone) changed to _ assignments.'
     C:
         status: complete
         branch: saw/audit-fixes-round2/wave1-agent-C
@@ -1060,15 +1054,7 @@ completion_reports:
             - TestLogger_LevelFiltering
             - TestLogger_IsDebug
         verification: PASS
-        notes: >-
-            New internal/logger package with leveled output (Debug/Info/Warn/Error).
-            All three constructors (NewDispatcher, NewRouter, NewServer) use variadic
-            ...*logger.Logger; existing call sites compile unchanged.
-            Debug logging added in dispatcher (pre/post request), router (trigger evaluation),
-            and publisher (matched count, dispatch trigger). CEL error logs use Warn.
-            Fixed by Orchestrator: triggerMatches passed r.logger as parameter (was using r
-            undefined in package-level function); log.Printf changed to log.Warn in evalCELCondition.
-            go test ./internal/logger/... ./internal/dispatcher/... ./internal/publisher/... ./internal/router/... passes.
+        notes: 'New internal/logger package with leveled output (Debug/Info/Warn/Error). All three constructors (NewDispatcher, NewRouter, NewServer) use variadic ...*logger.Logger; existing call sites compile unchanged. Debug logging added in dispatcher (pre/post request), router (trigger evaluation), and publisher (matched count, dispatch trigger). CEL error logs use Warn. Fixed by Orchestrator: triggerMatches passed r.logger as parameter (was using r undefined in package-level function); log.Printf changed to log.Warn in evalCELCondition. go test ./internal/logger/... ./internal/dispatcher/... ./internal/publisher/... ./internal/router/... passes.'
 pre_mortem:
     overall_risk: medium
     rows:
