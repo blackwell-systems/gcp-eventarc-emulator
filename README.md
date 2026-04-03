@@ -400,6 +400,30 @@ The demo creates triggers, channels, message buses, pipelines, and enrollments, 
 
 ---
 
+## SDK Demo
+
+Run the full SDK workflow — list providers, create a trigger, publish a CloudEvent, and delete the trigger — using the official `cloud.google.com/go/eventarc` SDK:
+
+```bash
+# Terminal 1: start emulator
+go run ./cmd/server-dual
+
+# Terminal 2: start webhook receiver (separate module)
+cd examples/webhook-receiver && go run main.go
+
+# Terminal 3: run the SDK demo
+cd examples/sdk-demo && EVENTARC_EMULATOR_HOST=localhost:9085 go run main.go
+```
+
+The sdk-demo automatically creates `my-channel` before publishing. If you prefer to pre-create it manually:
+
+```bash
+curl -X POST "http://localhost:8085/v1/projects/my-project/locations/us-central1/channels?channelId=my-channel" \
+  -H "Content-Type: application/json" -d '{}'
+```
+
+---
+
 ## Testing
 
 ```bash
