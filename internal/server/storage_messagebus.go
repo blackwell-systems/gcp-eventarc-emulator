@@ -74,6 +74,12 @@ func (s *Storage) UpdateMessageBus(ctx context.Context, mb *eventarcpb.MessageBu
 	if updateMask != nil {
 		for _, path := range updateMask.GetPaths() {
 			switch path {
+			case "*":
+				stored.Labels = mb.GetLabels()
+				stored.Annotations = mb.GetAnnotations()
+				stored.DisplayName = mb.GetDisplayName()
+				stored.CryptoKeyName = mb.GetCryptoKeyName()
+				stored.LoggingConfig = mb.GetLoggingConfig()
 			case "labels":
 				stored.Labels = mb.GetLabels()
 			case "annotations":
@@ -221,6 +227,13 @@ func (s *Storage) UpdateEnrollment(ctx context.Context, en *eventarcpb.Enrollmen
 	if updateMask != nil {
 		for _, path := range updateMask.GetPaths() {
 			switch path {
+			case "*":
+				stored.Labels = en.GetLabels()
+				stored.Annotations = en.GetAnnotations()
+				stored.DisplayName = en.GetDisplayName()
+				stored.CelMatch = en.GetCelMatch()
+				stored.Destination = en.GetDestination()
+				// Note: message_bus is intentionally NOT set here (immutable field).
 			case "labels":
 				stored.Labels = en.GetLabels()
 			case "annotations":
@@ -230,18 +243,19 @@ func (s *Storage) UpdateEnrollment(ctx context.Context, en *eventarcpb.Enrollmen
 			case "cel_match":
 				stored.CelMatch = en.GetCelMatch()
 			case "message_bus":
-				stored.MessageBus = en.GetMessageBus()
+				return nil, status.Errorf(codes.InvalidArgument,
+					"field message_bus is immutable and cannot be updated")
 			case "destination":
 				stored.Destination = en.GetDestination()
 			}
 		}
 	} else {
 		// No mask: update all mutable fields.
+		// Note: message_bus is intentionally NOT set here (immutable field).
 		stored.Labels = en.GetLabels()
 		stored.Annotations = en.GetAnnotations()
 		stored.DisplayName = en.GetDisplayName()
 		stored.CelMatch = en.GetCelMatch()
-		stored.MessageBus = en.GetMessageBus()
 		stored.Destination = en.GetDestination()
 	}
 

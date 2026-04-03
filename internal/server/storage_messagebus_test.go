@@ -7,6 +7,7 @@ import (
 	eventarcpb "cloud.google.com/go/eventarc/apiv1/eventarcpb"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/fieldmaskpb"
 )
 
 // newTestStorage creates a Storage with the new maps pre-initialized for tests.
@@ -263,4 +264,139 @@ func TestStorageListMessageBusEnrollments_FiltersByBus(t *testing.T) {
 func isEnrollmentName(name, parent string) bool {
 	prefix := parent + "/enrollments/"
 	return len(name) > len(prefix) && name[:len(prefix)] == prefix
+}
+
+// TestUpdateMessageBus_WildcardMask verifies that a wildcard mask ("*") updates
+// all mutable fields of a MessageBus.
+func TestUpdateMessageBus_WildcardMask(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStorageWithBuses()
+
+	parent := "projects/p/locations/l"
+	created, err := s.CreateMessageBus(ctx, parent, "bus-wc", &eventarcpb.MessageBus{
+		DisplayName: "Original",
+		Labels:      map[string]string{"env": "old"},
+	})
+	if err != nil {
+		t.Fatalf("CreateMessageBus: %v", err)
+	}
+
+	updated, err := s.UpdateMessageBus(ctx, &eventarcpb.MessageBus{
+		Name:        created.GetName(),
+		DisplayName: "Updated",
+		Labels:      map[string]string{"env": "new"},
+	}, &fieldmaskpb.FieldMask{Paths: []string{"*"}})
+	if err != nil {
+		t.Fatalf("UpdateMessageBus wildcard: %v", err)
+	}
+
+	if updated.GetDisplayName() != "Updated" {
+		t.Errorf("DisplayName = %q, want %q", updated.GetDisplayName(), "Updated")
+	}
+	if updated.GetLabels()["env"] != "new" {
+		t.Errorf("Labels[env] = %q, want %q", updated.GetLabels()["env"], "new")
+	}
+}
+
+// TestUpdateEnrollment_WildcardMask verifies that a wildcard mask ("*") updates
+// all mutable fields of an Enrollment while leaving message_bus unchanged.
+func TestUpdateEnrollment_WildcardMask(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStorageWithBuses()
+
+	parent := "projects/p/locations/l"
+	busName := parent + "/messageBuses/my-bus"
+	created, err := s.CreateEnrollment(ctx, parent, "enr-wc", &eventarcpb.Enrollment{
+		CelMatch:    "true",
+		MessageBus:  busName,
+		Destination: parent + "/pipelines/old-pipe",
+	})
+	if err != nil {
+		t.Fatalf("CreateEnrollment: %v", err)
+	}
+
+	newDest := parent + "/pipelines/new-pipe"
+	updated, err := s.UpdateEnrollment(ctx, &eventarcpb.Enrollment{
+		Name:        created.GetName(),
+		CelMatch:    "false",
+		MessageBus:  parent + "/messageBuses/other-bus", // should be ignored
+		Destination: newDest,
+	}, &fieldmaskpb.FieldMask{Paths: []string{"*"}})
+	if err != nil {
+		t.Fatalf("UpdateEnrollment wildcard: %v", err)
+	}
+
+	if updated.GetCelMatch() != "false" {
+		t.Errorf("CelMatch = %q, want %q", updated.GetCelMatch(), "false")
+	}
+	if updated.GetDestination() != newDest {
+		t.Errorf("Destination = %q, want %q", updated.GetDestination(), newDest)
+	}
+	// message_bus must NOT be updated by wildcard mask.
+	if updated.GetMessageBus() != busName {
+		t.Errorf("MessageBus = %q, want %q (immutable)", updated.GetMessageBus(), busName)
+	}
+}
+
+// TestUpdateEnrollment_MessageBusImmutable verifies that explicitly specifying
+// "message_bus" in the update mask returns an InvalidArgument error.
+func TestUpdateEnrollment_MessageBusImmutable(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStorageWithBuses()
+
+	parent := "projects/p/locations/l"
+	created, err := s.CreateEnrollment(ctx, parent, "enr-immut", &eventarcpb.Enrollment{
+		MessageBus: parent + "/messageBuses/bus-A",
+	})
+	if err != nil {
+		t.Fatalf("CreateEnrollment: %v", err)
+	}
+
+	_, err = s.UpdateEnrollment(ctx, &eventarcpb.Enrollment{
+		Name:       created.GetName(),
+		MessageBus: parent + "/messageBuses/bus-B",
+	}, &fieldmaskpb.FieldMask{Paths: []string{"message_bus"}})
+	if err == nil {
+		t.Fatal("expected InvalidArgument error for message_bus mask, got nil")
+	}
+	st, ok := status.FromError(err)
+	if !ok || st.Code() != codes.InvalidArgument {
+		t.Errorf("error code = %v, want InvalidArgument", status.Code(err))
+	}
+}
+
+// TestUpdateEnrollment_NoMask_MessageBusPreserved verifies that a no-mask
+// UpdateEnrollment does NOT overwrite the stored message_bus field.
+func TestUpdateEnrollment_NoMask_MessageBusPreserved(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStorageWithBuses()
+
+	parent := "projects/p/locations/l"
+	originalBus := parent + "/messageBuses/bus-A"
+	created, err := s.CreateEnrollment(ctx, parent, "enr-nomask", &eventarcpb.Enrollment{
+		CelMatch:   "true",
+		MessageBus: originalBus,
+	})
+	if err != nil {
+		t.Fatalf("CreateEnrollment: %v", err)
+	}
+
+	// Call UpdateEnrollment with no mask but a different message_bus value.
+	updated, err := s.UpdateEnrollment(ctx, &eventarcpb.Enrollment{
+		Name:       created.GetName(),
+		CelMatch:   "false",
+		MessageBus: parent + "/messageBuses/bus-B", // should be ignored
+	}, nil)
+	if err != nil {
+		t.Fatalf("UpdateEnrollment no mask: %v", err)
+	}
+
+	// message_bus must still equal the original value.
+	if updated.GetMessageBus() != originalBus {
+		t.Errorf("MessageBus = %q, want %q (immutable)", updated.GetMessageBus(), originalBus)
+	}
+	// cel_match should be updated.
+	if updated.GetCelMatch() != "false" {
+		t.Errorf("CelMatch = %q, want %q", updated.GetCelMatch(), "false")
+	}
 }

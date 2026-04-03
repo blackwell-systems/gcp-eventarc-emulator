@@ -73,6 +73,16 @@ func (s *Storage) UpdatePipeline(ctx context.Context, pl *eventarcpb.Pipeline, m
 	if mask != nil {
 		for _, path := range mask.GetPaths() {
 			switch path {
+			case "*":
+				stored.Labels = pl.GetLabels()
+				stored.Annotations = pl.GetAnnotations()
+				stored.DisplayName = pl.GetDisplayName()
+				stored.Destinations = pl.GetDestinations()
+				stored.Mediations = pl.GetMediations()
+				stored.CryptoKeyName = pl.GetCryptoKeyName()
+				stored.InputPayloadFormat = pl.GetInputPayloadFormat()
+				stored.LoggingConfig = pl.GetLoggingConfig()
+				stored.RetryPolicy = pl.GetRetryPolicy()
 			case "labels":
 				stored.Labels = pl.GetLabels()
 			case "annotations":
@@ -209,6 +219,13 @@ func (s *Storage) UpdateGoogleApiSource(ctx context.Context, src *eventarcpb.Goo
 	if mask != nil {
 		for _, path := range mask.GetPaths() {
 			switch path {
+			case "*":
+				stored.Labels = src.GetLabels()
+				stored.Annotations = src.GetAnnotations()
+				stored.DisplayName = src.GetDisplayName()
+				stored.Destination = src.GetDestination()
+				stored.CryptoKeyName = src.GetCryptoKeyName()
+				stored.LoggingConfig = src.GetLoggingConfig()
 			case "labels":
 				stored.Labels = src.GetLabels()
 			case "annotations":
