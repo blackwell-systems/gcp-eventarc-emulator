@@ -1,3 +1,4 @@
+completion_date: "2026-04-02"
 title: 'Refactor: Eliminate Code Duplication and Design Inconsistencies'
 feature_slug: refactor-dedup
 verdict: SUITABLE
@@ -908,6 +909,7 @@ waves:
             - Do not remove any test other than `TestNormalizeTriggerResource`.
           files:
             - internal/authz/permissions_test.go
+      base_commit: dc2def20da7974d18dd96e2a568a70b55d1dd012
 quality_gates:
     level: standard
     gates:
@@ -920,6 +922,58 @@ quality_gates:
         - type: test
           command: go test ./...
           required: true
+completion_reports:
+    A:
+        status: complete
+        branch: saw/refactor-dedup/wave1-agent-A
+        commit: 156191d
+        files_changed:
+            - internal/server/storage.go
+            - internal/server/storage_channel.go
+            - internal/server/storage_pipeline.go
+            - internal/server/storage_messagebus.go
+        files_created:
+            - internal/server/storage_helpers.go
+        verification: PASS
+        notes: Created storage_helpers.go with PaginatePage[T], cloneProto[T] (uses reflect.ValueOf.IsNil for nil-safety since interface types are not comparable with ==), newUID(), newEtag(). Replaced 8 per-type clone wrappers and 9 pagination blocks. All tests pass. cloneProvider in storage.go preserved as required.
+    B:
+        status: complete
+        branch: saw/refactor-dedup/wave1-agent-B
+        commit: f71e198
+        files_changed:
+            - internal/server/server.go
+        verification: PASS
+        notes: Added requireField and perm unexported helpers. Replaced all ~45 string validation if-blocks with requireField calls. Replaced all ~40 checkPermission raw string literal calls with perm() calls using authz constants. Corrected ListMessageBusEnrollments to use the ListMessageBusEnrollments authz key (eventarc.messageBuses.listEnrollments) instead of the previous incorrect eventarc.messageBuses.list. Build, vet, and all tests pass.
+    C:
+        status: complete
+        branch: saw/refactor-dedup/wave1-agent-C
+        commit: c868fc7
+        files_changed:
+            - internal/logger/logger.go
+            - internal/router/router.go
+            - internal/dispatcher/http.go
+            - internal/publisher/server.go
+        verification: PASS
+        notes: Added OrDefault to logger package. Updated NewRouter, NewDispatcher, NewServer to use logger.OrDefault. All 4 packages build, vet, and test clean.
+    D:
+        status: complete
+        branch: saw/refactor-dedup/wave1-agent-D
+        commit: 9cead1d
+        files_changed:
+            - cmd/server/main.go
+            - cmd/server-rest/main.go
+            - cmd/server-dual/main.go
+        verification: PASS
+        notes: Task 6 (banner log.Printf -> lgr.Info) applied to all three mains. Task 7 (readyCh ordering) applied to cmd/server and cmd/server-rest; cmd/server-dual was already correct. go build ./cmd/... and go vet ./cmd/... both clean.
+    E:
+        status: complete
+        branch: saw/refactor-dedup/wave1-agent-E
+        commit: e5b6f6b
+        files_changed:
+            - internal/authz/permissions.go
+            - internal/authz/permissions_test.go
+        verification: PASS
+        notes: Removed NormalizeTriggerResource (definition + test). Confirmed zero callers outside these two files before removal. build/vet/test all clean.
 pre_mortem:
     overall_risk: low
     rows:
@@ -1016,5 +1070,5 @@ critic_report:
     summary: 'All five agents verified. Agent E brief corrected post-critic: permissions_test.go added to file ownership; brief updated to instruct removal of TestNormalizeTriggerResource alongside the function. All other agents (A: storage helpers, B: server validation and IAM constants, C: logger OrDefault, D: startup log standardization) had accurate briefs verified against the codebase.'
     reviewed_at: "2026-04-03T04:05:00Z"
     issue_count: 0
-state: "REVIEWED"
+state: COMPLETE
 injection_method: hook

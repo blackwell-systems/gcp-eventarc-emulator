@@ -1,0 +1,30 @@
+{
+  "agent": {
+    "scout_model": "claude-sonnet-4-6",
+    "wave_model": "claude-sonnet-4-6"
+  },
+  "appearance": {},
+  "autonomy": {},
+  "build": {
+    "command": "go build ./...",
+    "detected": true
+  },
+  "providers": {
+    "anthropic": {},
+    "bedrock": {},
+    "openai": {}
+  },
+  "quality": {
+    "code_review": {}
+  },
+  "repos": [
+    {
+      "name": "gcp-eventarc-emulator",
+      "path": "/Users/dayna.blackwell/code/gcp-eventarc-emulator"
+    }
+  ],
+  "test": {
+    "command": "go test ./...",
+    "detected": true
+  }
+}
