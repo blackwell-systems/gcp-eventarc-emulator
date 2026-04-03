@@ -97,6 +97,9 @@ func main() {
 	}
 
 	log.Printf("IAM mode: %s", srv.IAMMode())
+	if token := os.Getenv("EVENTARC_EMULATOR_TOKEN"); token != "" {
+		log.Printf("Bearer token injection: enabled")
+	}
 
 	// Wire up router and dispatcher
 	rtr := router.NewRouter(srv.Storage())
@@ -142,7 +145,7 @@ func main() {
 	<-readyCh
 	log.Printf("Ready to accept both gRPC and REST requests")
 	log.Printf("gRPC: localhost:%d", *grpcPort)
-	log.Printf("REST: http://localhost:%d/v1/projects/{project}/locations/{location}/triggers", *httpPort)
+	log.Printf("REST: http://localhost:%d/v1/projects/my-project/locations/us-central1/triggers", *httpPort)
 
 	// Wait for interrupt signal to gracefully shut down
 	quit := make(chan os.Signal, 1)

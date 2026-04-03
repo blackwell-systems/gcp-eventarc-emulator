@@ -98,6 +98,9 @@ func main() {
 	}
 
 	log.Printf("IAM mode: %s", srv.IAMMode())
+	if token := os.Getenv("EVENTARC_EMULATOR_TOKEN"); token != "" {
+		log.Printf("Bearer token injection: enabled")
+	}
 
 	// Wire up router and dispatcher
 	rtr := router.NewRouter(srv.Storage())
