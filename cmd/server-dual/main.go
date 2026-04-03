@@ -140,9 +140,6 @@ func main() {
 	}()
 
 	// Start REST gateway proxying to the local gRPC server
-	// TODO(audit-fixes #12): grpc-gateway returns raw Go JSON parse errors for
-	// malformed request bodies. Add a custom runtime.WithErrorHandler to gateway.New()
-	// to intercept JSON parse errors and return "request body is not valid JSON".
 	gw, err := gateway.New(fmt.Sprintf("localhost:%d", *grpcPort))
 	if err != nil {
 		log.Fatalf("Failed to create REST gateway: %v", err)

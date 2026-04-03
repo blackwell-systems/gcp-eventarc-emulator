@@ -17,6 +17,22 @@ import (
 	longrunninggw "github.com/blackwell-systems/gcp-eventarc-emulator/internal/gen/google/longrunning"
 )
 
+// jsonErrorHandler intercepts proto/JSON unmarshal errors from grpc-gateway and
+// returns a clean {"code":3,"message":"request body is not valid JSON"} 400
+// instead of leaking raw Go parse internals to the caller.
+func jsonErrorHandler(ctx context.Context, mux *runtime.ServeMux, marshaler runtime.Marshaler, w http.ResponseWriter, r *http.Request, err error) {
+	msg := err.Error()
+	if strings.HasPrefix(msg, "proto:") ||
+		strings.Contains(msg, "invalid character") ||
+		strings.Contains(msg, "unexpected end of JSON") {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"code":3,"message":"request body is not valid JSON"}`))
+		return
+	}
+	runtime.DefaultHTTPErrorHandler(ctx, mux, marshaler, w, r, err)
+}
+
 // Gateway transcodes HTTP/JSON requests to gRPC via grpc-gateway.
 type Gateway struct {
 	mux       *runtime.ServeMux
@@ -32,7 +48,7 @@ func New(grpcAddr string) (*Gateway, error) {
 		return nil, err
 	}
 
-	mux := runtime.NewServeMux()
+	mux := runtime.NewServeMux(runtime.WithErrorHandler(jsonErrorHandler))
 	ctx := context.Background()
 
 	if err := eventarcv1.RegisterEventarcHandlerClient(ctx, mux, eventarcv1.NewEventarcClient(conn)); err != nil {
