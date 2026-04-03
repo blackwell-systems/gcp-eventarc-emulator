@@ -12,7 +12,6 @@ package publisher
 import (
 	"context"
 	"fmt"
-	"log"
 	"strings"
 
 	eventarcpb "cloud.google.com/go/eventarc/apiv1/eventarcpb"
@@ -21,6 +20,8 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/anypb"
+
+	"github.com/blackwell-systems/gcp-eventarc-emulator/internal/logger"
 )
 
 // ChannelChecker is the interface needed by the publisher to validate
@@ -46,15 +47,24 @@ type Server struct {
 	router     RouterMatcher
 	dispatcher EventDispatcher
 	channels   ChannelChecker
+	logger     *logger.Logger
 }
 
 // NewServer creates a new publisher Server.
-func NewServer(router RouterMatcher, dispatcher EventDispatcher, channels ChannelChecker) *Server {
-	return &Server{
+// An optional *logger.Logger may be supplied as the fourth argument;
+// if omitted or nil, defaults to info level.
+func NewServer(router RouterMatcher, dispatcher EventDispatcher, channels ChannelChecker, log ...*logger.Logger) *Server {
+	s := &Server{
 		router:     router,
 		dispatcher: dispatcher,
 		channels:   channels,
 	}
+	if len(log) > 0 && log[0] != nil {
+		s.logger = log[0]
+	} else {
+		s.logger = logger.New("info")
+	}
+	return s
 }
 
 // PublishEvents implements PublisherServer.
@@ -72,7 +82,7 @@ func (s *Server) PublishEvents(ctx context.Context, req *publishingpb.PublishEve
 		}
 	}
 	if len(req.GetEvents()) == 0 {
-		log.Printf("publisher: PublishEvents called with 0 events for channel=%s", req.GetChannel())
+		s.logger.Info("publisher: PublishEvents called with 0 events for channel=%s", req.GetChannel())
 	}
 	parent := parentFromChannel(req.GetChannel())
 	s.processAnySlice(ctx, parent, req.GetEvents())
@@ -98,7 +108,7 @@ func (s *Server) processAnySlice(ctx context.Context, parent string, anySlice []
 		}
 		event, err := unpackCloudEvent(a)
 		if err != nil {
-			log.Printf("publisher: failed to unpack CloudEvent from Any: %v, skipping", err)
+			s.logger.Error("publisher: failed to unpack CloudEvent from Any: %v, skipping", err)
 			continue
 		}
 		s.matchAndDispatch(ctx, parent, event)
@@ -111,19 +121,21 @@ func (s *Server) processAnySlice(ctx context.Context, parent string, anySlice []
 func (s *Server) matchAndDispatch(ctx context.Context, parent string, event cloudevents.Event) {
 	triggers, err := s.router.Match(ctx, parent, event)
 	if err != nil {
-		log.Printf("publisher: router.Match error (parent=%s): %v", parent, err)
+		s.logger.Error("publisher: router.Match error (parent=%s): %v", parent, err)
 		return
 	}
+	s.logger.Debug("publish: matched %d triggers channel=%s", len(triggers), parent)
 	if len(triggers) > 0 {
-		log.Printf("publisher: %d trigger(s) matched for parent=%s type=%s",
+		s.logger.Info("publisher: %d trigger(s) matched for parent=%s type=%s",
 			len(triggers), parent, event.Type())
 	}
 	for _, t := range triggers {
+		s.logger.Debug("publish: dispatch trigger=%s", t.GetName())
 		statusCode, err := s.dispatcher.Dispatch(ctx, t, event)
 		if err != nil {
-			log.Printf("publisher: dispatch error (trigger=%s): %v", t.GetName(), err)
+			s.logger.Error("publisher: dispatch error (trigger=%s): %v", t.GetName(), err)
 		} else if statusCode >= 400 {
-			log.Printf("publisher: non-2xx dispatch status %d for trigger %s", statusCode, t.GetName())
+			s.logger.Warn("publisher: non-2xx dispatch status %d for trigger %s", statusCode, t.GetName())
 		}
 	}
 }

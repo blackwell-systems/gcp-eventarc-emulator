@@ -12,13 +12,14 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"log"
 	"net/http"
 	"os"
 	"time"
 
 	eventarcpb "cloud.google.com/go/eventarc/apiv1/eventarcpb"
 	cloudevents "github.com/cloudevents/sdk-go/v2"
+
+	"github.com/blackwell-systems/gcp-eventarc-emulator/internal/logger"
 )
 
 const (
@@ -30,15 +31,23 @@ const (
 // Dispatcher sends CloudEvents to trigger destinations via HTTP.
 type Dispatcher struct {
 	client *http.Client
+	logger *logger.Logger
 }
 
 // NewDispatcher creates a Dispatcher with the given HTTP client.
 // If client is nil, http.DefaultClient is used with a 10-second timeout.
-func NewDispatcher(client *http.Client) *Dispatcher {
+// An optional *logger.Logger may be supplied; if omitted or nil, defaults to info level.
+func NewDispatcher(client *http.Client, log ...*logger.Logger) *Dispatcher {
 	if client == nil {
 		client = &http.Client{Timeout: defaultTimeout}
 	}
-	return &Dispatcher{client: client}
+	d := &Dispatcher{client: client}
+	if len(log) > 0 && log[0] != nil {
+		d.logger = log[0]
+	} else {
+		d.logger = logger.New("info")
+	}
+	return d
 }
 
 // Dispatch POSTs the CloudEvent in binary content mode to the trigger's destination.
@@ -51,6 +60,8 @@ func (d *Dispatcher) Dispatch(ctx context.Context, trigger *eventarcpb.Trigger, 
 	if err != nil {
 		return 0, err
 	}
+
+	d.logger.Debug("dispatch: POST %s event_id=%s type=%s", url, event.ID(), event.Type())
 
 	// Binary content mode: body is the raw event data bytes.
 	body := event.DataEncoded
@@ -100,11 +111,13 @@ func (d *Dispatcher) Dispatch(ctx context.Context, trigger *eventarcpb.Trigger, 
 
 	resp, err := d.client.Do(req)
 	if err != nil {
+		d.logger.Error("dispatch: send failed url=%s err=%v", url, err)
 		return 0, fmt.Errorf("dispatcher: send request: %w", err)
 	}
 	defer resp.Body.Close()
 
-	log.Printf("dispatching event to %s, status: %d", url, resp.StatusCode)
+	d.logger.Info("dispatching event to %s status=%d", url, resp.StatusCode)
+	d.logger.Debug("dispatch: response status=%d url=%s", resp.StatusCode, url)
 	return resp.StatusCode, nil
 }
 
