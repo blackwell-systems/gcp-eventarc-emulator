@@ -1,0 +1,1105 @@
+title: GCP Eventarc API Conformance Fixes
+feature_slug: conformance-fixes
+verdict: SUITABLE
+suitability_assessment: |
+    The work decomposes cleanly across 5 agents with disjoint file ownership:
+
+    1. Agent A — internal/lro/store.go: LRO metadata (update CreateDone signature)
+    2. Agent B — internal/server/server.go: validate_only, allow_missing, etag-delete,
+       required-field validation; all gRPC handler layer changes
+    3. Agent C — internal/server/storage.go + storage_channel.go + their tests:
+       Trigger etag on create/update, Channel initial state PENDING, activation_token,
+       ChannelConnection token clearing, GoogleChannelConfig stable update_time
+    4. Agent E — internal/server/storage_messagebus.go + storage_pipeline.go + their tests:
+       wildcard mask support, Enrollment message_bus immutability
+    5. Agent D — internal/router/router.go: match-path-pattern operator implementation
+
+    File ownership is fully disjoint. Agent B depends on Agent A (new CreateDone signature).
+    Agents C, D, and E are independent and can run in parallel with Agent A in Wave 1.
+    Agent B runs in Wave 2 after A completes.
+
+    Wave structure:
+    - Wave 1: A (lro signature), C (trigger/channel storage), D (router), E (messagebus/pipeline storage)
+    - Wave 2: B (server handler changes, depends on A's new CreateDone)
+
+    Pre-implementation status check: All 13 critical issues confirmed TODO. No items
+    already implemented.
+
+    Parallelization value: HIGH. go test ./... is non-trivial; 5 agents in 2 waves;
+    each agent touches 2-6 files with logic, tests, and edge cases.
+
+    Estimated times:
+    - Scout phase: ~10 min
+    - Agent execution: ~40 min (Wave 1: 4 agents x ~10 min avg parallel, Wave 2: 1 agent x ~15 min)
+    - Merge and verification: ~5 min
+    Total SAW time: ~55 min
+
+    Sequential baseline: ~75 min (5 agents x 15 min avg sequential)
+    Time savings: ~20 min (27% faster), plus coordination benefit.
+test_command: go test ./...
+lint_command: go vet ./...
+file_ownership:
+    - file: internal/lro/store.go
+      agent: A
+      wave: 1
+      action: modify
+    - file: internal/lro/store_test.go
+      agent: A
+      wave: 1
+      action: modify
+    - file: internal/server/storage.go
+      agent: C
+      wave: 1
+      action: modify
+    - file: internal/server/storage_channel.go
+      agent: C
+      wave: 1
+      action: modify
+    - file: internal/server/storage_test.go
+      agent: C
+      wave: 1
+      action: modify
+    - file: internal/server/storage_channel_test.go
+      agent: C
+      wave: 1
+      action: modify
+    - file: internal/server/storage_messagebus.go
+      agent: E
+      wave: 1
+      action: modify
+    - file: internal/server/storage_pipeline.go
+      agent: E
+      wave: 1
+      action: modify
+    - file: internal/server/storage_messagebus_test.go
+      agent: E
+      wave: 1
+      action: modify
+    - file: internal/server/storage_pipeline_test.go
+      agent: E
+      wave: 1
+      action: modify
+    - file: internal/router/router.go
+      agent: D
+      wave: 1
+      action: modify
+    - file: internal/router/router_test.go
+      agent: D
+      wave: 1
+      action: modify
+    - file: internal/router/match_test.go
+      agent: D
+      wave: 1
+      action: new
+    - file: internal/server/server.go
+      agent: B
+      wave: 2
+      action: modify
+      depends_on:
+        - A
+    - file: internal/server/server_test.go
+      agent: B
+      wave: 2
+      action: modify
+      depends_on:
+        - A
+interface_contracts:
+    - name: lro.Store.CreateDone
+      description: |-
+        Updated signature adds verb and target parameters so OperationMetadata
+        can be populated in every LRO response. All callers in server.go must
+        be updated to pass these arguments.
+      definition: |
+        // CreateDone creates a pre-resolved operation wrapping resource as response,
+        // with OperationMetadata populated.
+        //
+        // verb is the operation verb: "create", "update", or "delete".
+        // target is the full resource name (e.g. "projects/p/locations/l/triggers/t").
+        //
+        // The Operation.metadata field is packed as anypb.Any wrapping:
+        //   eventarcpb.OperationMetadata{
+        //     CreateTime: <now>,
+        //     EndTime:    <now>,
+        //     Target:     target,
+        //     Verb:       verb,
+        //     ApiVersion: "v1",
+        //   }
+        func (s *Store) CreateDone(parent string, resource proto.Message, verb string, target string) (*longrunningpb.Operation, error)
+      location: internal/lro/store.go
+    - name: storage.Storage.CreateTrigger
+      description: Must set stored.Etag = newEtag() before storing. No signature change.
+      definition: |
+        // Add before s.triggers[name] = stored:
+        //   stored.Etag = newEtag()
+        func (s *Storage) CreateTrigger(ctx context.Context, parent, triggerID string, trigger *eventarcpb.Trigger) (*eventarcpb.Trigger, error)
+      location: internal/server/storage.go
+    - name: storage.Storage.UpdateTrigger
+      description: Must set stored.Etag = newEtag() after applying mask. Also handle "*" mask.
+      definition: |
+        // Add after stored.UpdateTime = timestamppb.Now():
+        //   stored.Etag = newEtag()
+        // Add case "*": branch applying all mutable fields.
+        func (s *Storage) UpdateTrigger(ctx context.Context, trigger *eventarcpb.Trigger, updateMask *fieldmaskpb.FieldMask) (*eventarcpb.Trigger, error)
+      location: internal/server/storage.go
+    - name: storage.Storage.CreateChannel
+      description: Must set initial state to Channel_PENDING and generate activation_token.
+      definition: |
+        // Change stored.State = eventarcpb.Channel_ACTIVE to:
+        //   stored.State = eventarcpb.Channel_PENDING
+        //   stored.ActivationToken = newUID()
+        func (s *Storage) CreateChannel(ctx context.Context, parent, channelID string, ch *eventarcpb.Channel) (*eventarcpb.Channel, error)
+      location: internal/server/storage_channel.go
+    - name: storage.Storage.GetGoogleChannelConfig
+      description: Must return a stable default config (set update_time once, not on every call).
+      definition: |
+        // Use double-checked locking: RLock first, on miss take WLock, store default,
+        // return stable copy. update_time is set once and never regenerated.
+        func (s *Storage) GetGoogleChannelConfig(ctx context.Context, name string) (*eventarcpb.GoogleChannelConfig, error)
+      location: internal/server/storage_channel.go
+    - name: router.matchPathPattern
+      description: |-
+        New unexported function for path-pattern matching used in triggerMatches.
+        ** matches zero or more segments; * matches exactly one segment.
+      definition: |
+        func matchPathPattern(pattern, value string) bool
+        func matchSegs(pSegs, vSegs []string) bool
+      location: internal/router/router.go
+waves:
+    - number: 1
+      agents:
+        - id: A
+          task: |
+            ## Agent A — LRO Metadata: Update CreateDone in internal/lro/store.go
+
+            ### What to implement
+
+            Update `lro.Store.CreateDone` to accept two new parameters (`verb string`,
+            `target string`) and populate `Operation.metadata` with an
+            `eventarcpb.OperationMetadata` struct.
+
+            **File to modify:** `internal/lro/store.go`
+
+            **Current signature:**
+            ```go
+            func (s *Store) CreateDone(parent string, resource proto.Message) (*longrunningpb.Operation, error)
+            ```
+
+            **New signature:**
+            ```go
+            func (s *Store) CreateDone(parent string, resource proto.Message, verb string, target string) (*longrunningpb.Operation, error)
+            ```
+
+            ### Implementation details
+
+            After creating `anyVal` from the resource (the existing `anypb.New(resource)` call),
+            also create a metadata `anypb.Any`:
+
+            ```go
+            now := timestamppb.Now()
+            meta := &eventarcpb.OperationMetadata{
+                CreateTime: now,
+                EndTime:    now,
+                Target:     target,
+                Verb:       verb,
+                ApiVersion: "v1",
+            }
+            metaAny, err := anypb.New(meta)
+            if err != nil {
+                return nil, fmt.Errorf("lro: pack metadata into anypb: %w", err)
+            }
+            ```
+
+            Then set `op.Metadata = metaAny` on the Operation struct before storing it.
+
+            Add import for `eventarcpb "cloud.google.com/go/eventarc/apiv1/eventarcpb"` and
+            `"google.golang.org/protobuf/types/known/timestamppb"` to the lro package imports
+            if not already present.
+
+            ### Tests to write
+
+            **File to modify:** `internal/lro/store_test.go`
+
+            Examine the existing tests in that file and follow the same style. Update any
+            existing calls to `CreateDone` to pass the new parameters. Add tests:
+
+            1. `TestCreateDone_MetadataPopulated`: call `CreateDone` with verb="create" and
+               a non-empty target, then:
+               - Assert `op.Metadata` is non-nil
+               - Unpack `op.Metadata` as `*eventarcpb.OperationMetadata` using `anypb.UnmarshalTo`
+               - Assert `meta.Verb == "create"`, `meta.ApiVersion == "v1"`, `meta.Target` is correct,
+                 `meta.CreateTime != nil`, `meta.EndTime != nil`
+
+            2. `TestCreateDone_VerbDelete`: same but verb="delete", assert `meta.Verb == "delete"`.
+
+            ### Verification gate
+
+            ```
+            go build ./internal/lro/...
+            go vet ./internal/lro/...
+            go test ./internal/lro/...
+            ```
+
+            ### Constraints
+
+            - Do NOT change WaitOperation, GetOperation, DeleteOperation, or ListOperations.
+            - `verb` must be passed by callers ("create", "update", "delete") — never inferred inside.
+            - `target` is the full resource name, not the parent.
+            - Update any existing test calls to CreateDone in store_test.go to pass the two new parameters.
+            - Do NOT modify any files in internal/server/ or internal/router/.
+          files:
+            - internal/lro/store.go
+            - internal/lro/store_test.go
+        - id: C
+          task: |
+            ## Agent C — Storage Fixes: Trigger etag, Channel state, GoogleChannelConfig
+
+            ### What to implement
+
+            Fix storage-layer issues in two files: `internal/server/storage.go` and
+            `internal/server/storage_channel.go`.
+
+            ---
+
+            #### File 1: internal/server/storage.go
+
+            **CreateTrigger** — add etag generation. After `stored.UpdateTime = now` (around line 144),
+            add:
+            ```go
+            stored.Etag = newEtag()
+            ```
+
+            **UpdateTrigger** — add etag refresh. After `stored.UpdateTime = timestamppb.Now()`
+            (around line 200), add:
+            ```go
+            stored.Etag = newEtag()
+            ```
+
+            **UpdateTrigger** — add wildcard mask support. In the `updateMask != nil` branch,
+            inside the `for _, path := range updateMask.GetPaths()` switch, add a `case "*":` branch
+            that applies all mutable fields (same content as the `else` branch):
+            ```go
+            case "*":
+                stored.Labels = trigger.GetLabels()
+                stored.Destination = trigger.GetDestination()
+                stored.EventFilters = trigger.GetEventFilters()
+                stored.ServiceAccount = trigger.GetServiceAccount()
+                stored.Channel = trigger.GetChannel()
+            ```
+
+            ---
+
+            #### File 2: internal/server/storage_channel.go
+
+            **CreateChannel** — fix initial state and generate activation token. Change:
+            ```go
+            stored.State = eventarcpb.Channel_ACTIVE
+            ```
+            to:
+            ```go
+            stored.State = eventarcpb.Channel_PENDING
+            stored.ActivationToken = newUID()
+            ```
+
+            **CreateChannelConnection** — clear the input-only activation token.
+            After `stored := cloneProto(conn)` (around line 159), add:
+            ```go
+            stored.ActivationToken = ""
+            ```
+
+            **GetGoogleChannelConfig** — fix unstable update_time. Replace the entire method
+            body with a double-checked locking pattern:
+            ```go
+            func (s *Storage) GetGoogleChannelConfig(ctx context.Context, name string) (*eventarcpb.GoogleChannelConfig, error) {
+                s.mu.RLock()
+                stored, exists := s.googleChannelConfigs[name]
+                s.mu.RUnlock()
+                if exists {
+                    return cloneProto(stored), nil
+                }
+                // Initialize stable default on first access.
+                s.mu.Lock()
+                defer s.mu.Unlock()
+                // Double-check after acquiring write lock.
+                if stored, exists = s.googleChannelConfigs[name]; exists {
+                    return cloneProto(stored), nil
+                }
+                defaultCfg := &eventarcpb.GoogleChannelConfig{
+                    Name:       name,
+                    UpdateTime: timestamppb.Now(),
+                }
+                s.googleChannelConfigs[name] = defaultCfg
+                return cloneProto(defaultCfg), nil
+            }
+            ```
+
+            **UpdateGoogleChannelConfig** — add name validation. After `name := cfg.GetName()`
+            (around line 246), add:
+            ```go
+            if name == "" {
+                return nil, status.Errorf(codes.InvalidArgument, "google_channel_config.name is required")
+            }
+            ```
+
+            Also add wildcard mask support to **UpdateGoogleChannelConfig**. In the mask switch,
+            add:
+            ```go
+            case "*":
+                stored.CryptoKeyName = cfg.GetCryptoKeyName()
+                stored.Labels = cfg.GetLabels()
+            ```
+
+            ---
+
+            ### Tests to write
+
+            **internal/server/storage_test.go** — add these test functions:
+
+            - `TestCreateTrigger_EtagSet`: create a trigger, assert `GetEtag() != ""`
+            - `TestUpdateTrigger_EtagRefreshed`: create a trigger, capture etag1; update it,
+              capture etag2; assert `etag1 != etag2` and `etag2 != ""`
+            - `TestUpdateTrigger_WildcardMask`: create a trigger; call UpdateTrigger with
+              updateMask.paths=["*"] and changed fields; assert all fields are updated
+
+            **internal/server/storage_channel_test.go** — add these test functions:
+
+            - `TestCreateChannel_InitialStatePending`: create a channel, assert `State == Channel_PENDING`
+            - `TestCreateChannel_ActivationTokenSet`: create a channel, assert `ActivationToken != ""`
+            - `TestCreateChannelConnection_ActivationTokenCleared`: create a ChannelConnection
+              with a non-empty ActivationToken in the input, assert the stored connection has
+              `ActivationToken == ""`
+            - `TestGetGoogleChannelConfig_StableUpdateTime`: call GetGoogleChannelConfig twice
+              for the same name; assert both calls return the same `UpdateTime.AsTime()` value
+            - `TestUpdateGoogleChannelConfig_NameRequired`: call UpdateGoogleChannelConfig with
+              an empty name, assert `codes.InvalidArgument` error
+
+            Look at the existing test patterns in storage_channel_test.go and follow the same
+            `package server` style. Use the existing `newTestStorage()` or `newTestServer()` helper
+            if available; otherwise create `NewStorage()` directly.
+
+            ### Verification gate
+
+            ```
+            go build ./internal/server/...
+            go vet ./internal/server/...
+            go test ./internal/server/... -run "TestCreateTrigger|TestUpdateTrigger|TestCreateChannel|TestCreateChannelConnection|TestGetGoogleChannelConfig|TestUpdateGoogleChannelConfig"
+            ```
+
+            ### Constraints
+
+            - Do NOT modify storage_messagebus.go or storage_pipeline.go (owned by Agent E).
+            - Do NOT modify server.go (owned by Agent B).
+            - Do NOT modify lro/store.go (owned by Agent A).
+            - The `newUID()` and `newEtag()` helpers are in `storage_helpers.go` in the same
+              package — use them directly without importing anything extra.
+            - For `GetGoogleChannelConfig`, the double-checked locking pattern is important to
+              avoid a race. The RLock + miss + WLock + re-check sequence is correct.
+            - Verify that `eventarcpb.Channel` has an `ActivationToken` field before implementing;
+              run `go doc cloud.google.com/go/eventarc/apiv1/eventarcpb Channel` if uncertain.
+          files:
+            - internal/server/storage.go
+            - internal/server/storage_channel.go
+            - internal/server/storage_test.go
+            - internal/server/storage_channel_test.go
+        - id: D
+          task: |
+            ## Agent D — Router: Implement match-path-pattern operator
+
+            ### What to implement
+
+            **File to modify:** `internal/router/router.go`
+
+            Implement `matchPathPattern(pattern, value string) bool` and `matchSegs` helper,
+            then wire them into `triggerMatches` for `operator == "match-path-pattern"` or
+            `"path_pattern"`.
+
+            #### New functions to add
+
+            Add these two unexported functions to router.go:
+
+            ```go
+            // matchPathPattern reports whether value matches the given path pattern.
+            // Pattern syntax:
+            //   **  matches zero or more path segments (must be a complete segment)
+            //   *   matches exactly one path segment (any value)
+            //   other: exact segment match (case-sensitive)
+            //
+            // Examples:
+            //   matchPathPattern("//storage.googleapis.com/projects/_/buckets/*/objects/*",
+            //                    "//storage.googleapis.com/projects/_/buckets/my-bucket/objects/my-obj")
+            //   → true
+            //
+            //   matchPathPattern("//storage.googleapis.com/projects/**",
+            //                    "//storage.googleapis.com/projects/foo/bar/baz")
+            //   → true
+            func matchPathPattern(pattern, value string) bool {
+                pSegs := strings.Split(pattern, "/")
+                vSegs := strings.Split(value, "/")
+                return matchSegs(pSegs, vSegs)
+            }
+
+            // matchSegs recursively matches pattern segments against value segments.
+            func matchSegs(pSegs, vSegs []string) bool {
+                for len(pSegs) > 0 {
+                    p := pSegs[0]
+                    pSegs = pSegs[1:]
+                    if p == "**" {
+                        // ** matches zero or more segments: try consuming 0..N remaining value segments.
+                        for i := 0; i <= len(vSegs); i++ {
+                            if matchSegs(pSegs, vSegs[i:]) {
+                                return true
+                            }
+                        }
+                        return false
+                    }
+                    if len(vSegs) == 0 {
+                        return false
+                    }
+                    v := vSegs[0]
+                    vSegs = vSegs[1:]
+                    if p != "*" && p != v {
+                        return false
+                    }
+                    // p == "*" or exact match: consume one segment and continue.
+                }
+                return len(vSegs) == 0
+            }
+            ```
+
+            #### Update triggerMatches
+
+            Replace the block starting at line 82 in `triggerMatches`:
+            ```go
+            // Operator "" and "match-path-pattern" both use exact match for now.
+            if eventVal != f.GetValue() {
+                return false
+            }
+            ```
+
+            With operator-aware matching:
+            ```go
+            switch f.GetOperator() {
+            case "match-path-pattern", "path_pattern":
+                if !matchPathPattern(f.GetValue(), eventVal) {
+                    return false
+                }
+            default: // "" or any unknown operator: exact match
+                if eventVal != f.GetValue() {
+                    return false
+                }
+            }
+            ```
+
+            Add `"strings"` to the import block if it is not already present.
+
+            ### Tests to write
+
+            **File to modify:** `internal/router/router_test.go`
+
+            The existing router_test.go uses `package router_test` (external test package).
+            Add these integration test functions to router_test.go that test through `Router.Match`:
+
+            **TestMatch_MatchPathPatternOperator_SingleWildcard**: Create a trigger with:
+            - EventFilter: `Attribute="source"`, `Value="//storage.googleapis.com/projects/_/buckets/*/objects/*"`,
+              `Operator="match-path-pattern"`
+            Then:
+            - Event with source `"//storage.googleapis.com/projects/_/buckets/my-bucket/objects/my-obj"` → matches
+            - Event with source `"//storage.googleapis.com/projects/_/buckets/my-bucket/objects/foo/bar"` → no match (extra segment)
+            - Event with source `"//other.googleapis.com/projects/_/buckets/x/objects/y"` → no match
+
+            **TestMatch_MatchPathPatternOperator_DoubleWildcard**: Create a trigger with:
+            - EventFilter: `Attribute="source"`, `Value="//storage.googleapis.com/projects/**"`,
+              `Operator="match-path-pattern"`
+            Then:
+            - Source `"//storage.googleapis.com/projects/foo/bar/baz"` → matches
+            - Source `"//storage.googleapis.com/projects"` — this is ambiguous; test zero segments after "projects":
+              source `"//storage.googleapis.com/projects/"` → matches (** matches empty segment sequence)
+            - Source `"//other.googleapis.com/projects/foo"` → no match
+
+            **TestMatch_PathPatternOperatorAlias**: same scenario as SingleWildcard but with
+            `Operator="path_pattern"` — verify the alias also works.
+
+            **TestMatch_ExactMatchOperator_Unchanged**: verify that operator="" still performs
+            exact match and is not accidentally changed.
+
+            For unit-testing the unexported `matchPathPattern` function directly, create a new
+            file `internal/router/match_test.go` with `package router` (internal test package):
+
+            ```go
+            package router
+            // ...
+            func TestMatchPathPattern_Unit(t *testing.T) { ... }
+            func TestMatchSegs_Unit(t *testing.T) { ... }
+            ```
+
+            Add unit tests for edge cases: empty pattern, empty value, `**` at start, `**` in middle.
+
+            ### Verification gate
+
+            ```
+            go build ./internal/router/...
+            go vet ./internal/router/...
+            go test ./internal/router/...
+            ```
+
+            ### Constraints
+
+            - Do NOT modify any other files.
+            - `matchSegs` must be unexported (lowercase).
+            - `**` is only a wildcard when it appears as a complete path segment (i.e., surrounded
+              by "/" delimiters or at the start/end of the pattern). Substring occurrences like
+              `"foo**bar"` are treated as literal and will not match via wildcard logic.
+            - Keep the existing exact-match behavior for operator `""` and all unrecognised operator
+              values — only `"match-path-pattern"` and `"path_pattern"` use pattern matching.
+            - Do NOT modify internal/server/ or internal/lro/ files.
+          files:
+            - internal/router/router.go
+            - internal/router/router_test.go
+        - id: E
+          task: |
+            ## Agent E — Storage Fixes: MessageBus, Enrollment, Pipeline, GoogleApiSource wildcard mask
+
+            ### What to implement
+
+            Add wildcard mask (`"*"`) support to Update methods in two files, and fix
+            Enrollment message_bus immutability.
+
+            ---
+
+            #### File 1: internal/server/storage_messagebus.go
+
+            **UpdateMessageBus** — add wildcard mask. In the `updateMask != nil` branch switch,
+            add:
+            ```go
+            case "*":
+                stored.Labels = mb.GetLabels()
+                stored.Annotations = mb.GetAnnotations()
+                stored.DisplayName = mb.GetDisplayName()
+                stored.CryptoKeyName = mb.GetCryptoKeyName()
+                stored.LoggingConfig = mb.GetLoggingConfig()
+            ```
+
+            **UpdateEnrollment** — add wildcard mask and enforce message_bus immutability.
+
+            In the `updateMask != nil` branch switch, add:
+            ```go
+            case "*":
+                stored.Labels = en.GetLabels()
+                stored.Annotations = en.GetAnnotations()
+                stored.DisplayName = en.GetDisplayName()
+                stored.CelMatch = en.GetCelMatch()
+                stored.Destination = en.GetDestination()
+                // Note: message_bus is intentionally NOT set here (immutable field).
+            ```
+
+            Change the existing `case "message_bus":` from:
+            ```go
+            case "message_bus":
+                stored.MessageBus = en.GetMessageBus()
+            ```
+            to:
+            ```go
+            case "message_bus":
+                return nil, status.Errorf(codes.InvalidArgument,
+                    "field message_bus is immutable and cannot be updated")
+            ```
+
+            In the no-mask `else` branch, remove:
+            ```go
+            stored.MessageBus = en.GetMessageBus()
+            ```
+            (message_bus must not be overwritten even in a full-field update with no mask).
+
+            ---
+
+            #### File 2: internal/server/storage_pipeline.go
+
+            **UpdatePipeline** — add wildcard mask. In the `mask != nil` branch switch, add:
+            ```go
+            case "*":
+                stored.Labels = pl.GetLabels()
+                stored.Annotations = pl.GetAnnotations()
+                stored.DisplayName = pl.GetDisplayName()
+                stored.Destinations = pl.GetDestinations()
+                stored.Mediations = pl.GetMediations()
+                stored.CryptoKeyName = pl.GetCryptoKeyName()
+                stored.InputPayloadFormat = pl.GetInputPayloadFormat()
+                stored.LoggingConfig = pl.GetLoggingConfig()
+                stored.RetryPolicy = pl.GetRetryPolicy()
+            ```
+
+            **UpdateGoogleApiSource** — add wildcard mask. In the `mask != nil` branch switch,
+            add:
+            ```go
+            case "*":
+                stored.Labels = src.GetLabels()
+                stored.Annotations = src.GetAnnotations()
+                stored.DisplayName = src.GetDisplayName()
+                stored.Destination = src.GetDestination()
+                stored.CryptoKeyName = src.GetCryptoKeyName()
+                stored.LoggingConfig = src.GetLoggingConfig()
+            ```
+
+            ---
+
+            ### Tests to write
+
+            **internal/server/storage_messagebus_test.go** — add:
+
+            - `TestUpdateMessageBus_WildcardMask`: create a message bus; call UpdateMessageBus
+              with `updateMask.paths=["*"]` and changed fields (DisplayName, Labels, etc.);
+              assert all mutable fields are updated.
+            - `TestUpdateEnrollment_WildcardMask`: create an enrollment; update with mask=["*"]
+              and changed CelMatch and Destination; assert they are updated.
+            - `TestUpdateEnrollment_MessageBusImmutable`: create an enrollment with message_bus="bus-A";
+              attempt UpdateEnrollment with updateMask.paths=["message_bus"]; assert
+              `codes.InvalidArgument` error.
+            - `TestUpdateEnrollment_NoMask_MessageBusPreserved`: create an enrollment with
+              message_bus="bus-A"; call UpdateEnrollment with no mask and a different message_bus
+              value; assert that `stored.MessageBus` is still "bus-A" after the update.
+
+            **internal/server/storage_pipeline_test.go** — add:
+
+            - `TestUpdatePipeline_WildcardMask`: create a pipeline; update with mask=["*"];
+              assert all mutable fields are updated.
+            - `TestUpdateGoogleApiSource_WildcardMask`: create a GoogleApiSource; update with
+              mask=["*"]; assert all mutable fields are updated.
+
+            Look at the existing test patterns in storage_messagebus_test.go and
+            storage_pipeline_test.go. Use `NewStorage()` directly for unit tests.
+
+            To build a FieldMask with paths=["*"]:
+            ```go
+            import "google.golang.org/protobuf/types/known/fieldmaskpb"
+            mask := &fieldmaskpb.FieldMask{Paths: []string{"*"}}
+            ```
+
+            ### Verification gate
+
+            ```
+            go build ./internal/server/...
+            go vet ./internal/server/...
+            go test ./internal/server/... -run "TestUpdateMessageBus|TestUpdateEnrollment|TestUpdatePipeline|TestUpdateGoogleApiSource"
+            ```
+
+            ### Constraints
+
+            - Do NOT modify storage.go or storage_channel.go (owned by Agent C).
+            - Do NOT modify server.go (owned by Agent B).
+            - Do NOT modify lro/store.go (owned by Agent A).
+            - The message_bus immutability rule applies in both the mask and no-mask update paths.
+              After your change, a no-mask UpdateEnrollment that passes a different message_bus
+              value in the Enrollment struct must NOT update the stored message_bus field —
+              simply do not assign it in the else branch.
+            - Do NOT add server-layer validation (cel_match required, etc.) — that belongs in
+              server.go and is handled by Agent B.
+          files:
+            - internal/server/storage_messagebus.go
+            - internal/server/storage_pipeline.go
+            - internal/server/storage_messagebus_test.go
+            - internal/server/storage_pipeline_test.go
+    - number: 2
+      agents:
+        - id: B
+          task: |
+            ## Agent B — Server Handler Fixes (validate_only, allow_missing, etag-delete, LRO metadata)
+
+            ### Context
+
+            Agent A (Wave 1) has updated `lro.Store.CreateDone` to accept two new parameters:
+            `verb string` and `target string`. The new signature is:
+            ```go
+            func (s *Store) CreateDone(parent string, resource proto.Message, verb string, target string) (*longrunningpb.Operation, error)
+            ```
+
+            All 20 calls to `s.lro.CreateDone` in `internal/server/server.go` must be updated
+            to pass these parameters. This file also needs handler-layer conformance fixes.
+
+            ---
+
+            ### Fix 1: Update all CreateDone calls (LRO-1)
+
+            Every call to `s.lro.CreateDone(parent, resource)` becomes
+            `s.lro.CreateDone(parent, resource, verb, target)`.
+
+            Verb and target mapping for each method:
+
+            | Method | verb | target |
+            |--------|------|--------|
+            | CreateTrigger | "create" | `fmt.Sprintf("%s/triggers/%s", req.GetParent(), req.GetTriggerId())` |
+            | UpdateTrigger | "update" | `req.GetTrigger().GetName()` |
+            | DeleteTrigger | "delete" | `req.GetName()` |
+            | CreateChannel | "create" | `fmt.Sprintf("%s/channels/%s", req.GetParent(), req.GetChannelId())` |
+            | UpdateChannel | "update" | `req.GetChannel().GetName()` |
+            | DeleteChannel | "delete" | `req.GetName()` |
+            | CreateChannelConnection | "create" | `fmt.Sprintf("%s/channelConnections/%s", req.GetParent(), req.GetChannelConnectionId())` |
+            | DeleteChannelConnection | "delete" | `req.GetName()` |
+            | CreateMessageBus | "create" | `fmt.Sprintf("%s/messageBuses/%s", req.GetParent(), req.GetMessageBusId())` |
+            | UpdateMessageBus | "update" | `req.GetMessageBus().GetName()` |
+            | DeleteMessageBus | "delete" | `req.GetName()` |
+            | CreateEnrollment | "create" | `fmt.Sprintf("%s/enrollments/%s", req.GetParent(), req.GetEnrollmentId())` |
+            | UpdateEnrollment | "update" | `req.GetEnrollment().GetName()` |
+            | DeleteEnrollment | "delete" | `req.GetName()` |
+            | CreatePipeline | "create" | `fmt.Sprintf("%s/pipelines/%s", req.GetParent(), req.GetPipelineId())` |
+            | UpdatePipeline | "update" | `req.GetPipeline().GetName()` |
+            | DeletePipeline | "delete" | `req.GetName()` |
+            | CreateGoogleApiSource | "create" | `fmt.Sprintf("%s/googleApiSources/%s", req.GetParent(), req.GetGoogleApiSourceId())` |
+            | UpdateGoogleApiSource | "update" | `req.GetGoogleApiSource().GetName()` |
+            | DeleteGoogleApiSource | "delete" | `req.GetName()` |
+
+            ---
+
+            ### Fix 2: validate_only on all 18 mutating RPCs (LRO-3)
+
+            Add a `validate_only` check in each mutating RPC AFTER permission checks and
+            BEFORE storage calls.
+
+            **For Create methods** (CreateTrigger, CreateChannel, CreateChannelConnection,
+            CreateMessageBus, CreateEnrollment, CreatePipeline, CreateGoogleApiSource):
+            ```go
+            if req.GetValidateOnly() {
+                // Validation passed; return a preview LRO without persisting.
+                synthetic := proto.Clone(req.GetTrigger()).(*eventarcpb.Trigger)
+                synthetic.Name = fmt.Sprintf("%s/triggers/%s", req.GetParent(), req.GetTriggerId())
+                return s.lro.CreateDone(req.GetParent(), synthetic, "create", synthetic.Name)
+            }
+            ```
+            Use the appropriate resource type for each method.
+
+            **For Update methods** (UpdateTrigger, UpdateChannel, UpdateMessageBus,
+            UpdateEnrollment, UpdatePipeline, UpdateGoogleApiSource):
+            ```go
+            if req.GetValidateOnly() {
+                existing, err := s.storage.GetTrigger(ctx, req.GetTrigger().GetName())
+                if err != nil {
+                    return nil, err
+                }
+                return s.lro.CreateDone(parent, existing, "update", req.GetTrigger().GetName())
+            }
+            ```
+            Use the appropriate Get and resource field for each method. For UpdateChannel,
+            use `s.storage.GetChannel`.
+
+            **For Delete methods** (DeleteTrigger, DeleteChannel, DeleteChannelConnection,
+            DeleteMessageBus, DeleteEnrollment, DeletePipeline, DeleteGoogleApiSource):
+            ```go
+            if req.GetValidateOnly() {
+                _, err := s.storage.GetTrigger(ctx, req.GetName())
+                if err != nil {
+                    return nil, err
+                }
+                return s.lro.CreateDone(parent, &emptypb.Empty{}, "delete", req.GetName())
+            }
+            ```
+            Import `"google.golang.org/protobuf/types/known/emptypb"` for this.
+
+            Note: `DeleteChannel` and `DeleteChannelConnection` do NOT have `allow_missing`
+            or `etag` fields per the conformance report — only handle `validate_only` for them.
+
+            ---
+
+            ### Fix 3: allow_missing on Delete methods (ALLOW-MISSING-1)
+
+            Applies to: DeleteTrigger, DeleteMessageBus, DeleteEnrollment, DeletePipeline,
+            DeleteGoogleApiSource.
+
+            (DeleteChannel and DeleteChannelConnection do NOT have allow_missing.)
+
+            Replace the pattern:
+            ```go
+            trigger, err := s.storage.GetTrigger(ctx, req.GetName())
+            if err != nil {
+                return nil, err
+            }
+            if err := s.storage.DeleteTrigger(ctx, req.GetName()); err != nil {
+                return nil, err
+            }
+            return s.lro.CreateDone(parent, trigger)
+            ```
+
+            With:
+            ```go
+            existing, err := s.storage.GetTrigger(ctx, req.GetName())
+            if err != nil {
+                if req.GetAllowMissing() && isNotFound(err) {
+                    return s.lro.CreateDone(parent, &emptypb.Empty{}, "delete", req.GetName())
+                }
+                return nil, err
+            }
+            // etag check (Fix 4) goes here
+            if err := s.storage.DeleteTrigger(ctx, req.GetName()); err != nil {
+                return nil, err
+            }
+            return s.lro.CreateDone(parent, existing, "delete", req.GetName())
+            ```
+
+            ---
+
+            ### Fix 4: etag validation on Delete methods (ETAG-2)
+
+            Applies to: DeleteTrigger, DeleteMessageBus, DeleteEnrollment, DeletePipeline,
+            DeleteGoogleApiSource.
+
+            After fetching the existing resource (from Fix 3), add the etag check:
+            ```go
+            if reqEtag := req.GetEtag(); reqEtag != "" {
+                if existing.GetEtag() != reqEtag {
+                    return nil, status.Errorf(codes.Aborted,
+                        "etag mismatch: provided %q does not match stored %q",
+                        reqEtag, existing.GetEtag())
+                }
+            }
+            ```
+
+            The complete Delete method order (after all fixes) is:
+            1. requireField check
+            2. permission check
+            3. validate_only check (Fix 2)
+            4. GetX (fetch existing resource)
+            5. allow_missing check (Fix 3 — if not found and allow_missing, return success)
+            6. etag check (Fix 4 — if etag mismatch, return Aborted)
+            7. DeleteX
+            8. CreateDone with verb="delete"
+
+            ---
+
+            ### Fix 5: allow_missing on Update methods (ALLOW-MISSING-1)
+
+            Applies to: UpdateTrigger, UpdateMessageBus, UpdateEnrollment, UpdatePipeline,
+            UpdateGoogleApiSource.
+
+            After the storage UpdateX call, intercept NotFound:
+            ```go
+            trigger, err := s.storage.UpdateTrigger(ctx, req.GetTrigger(), req.GetUpdateMask())
+            if err != nil {
+                if req.GetAllowMissing() && isNotFound(err) {
+                    // Upsert: create the resource.
+                    trigger, err = s.storage.CreateTrigger(ctx,
+                        parent, lastSegment(req.GetTrigger().GetName()), req.GetTrigger())
+                    if err != nil {
+                        return nil, err
+                    }
+                } else {
+                    return nil, err
+                }
+            }
+            return s.lro.CreateDone(parent, trigger, "update", req.GetTrigger().GetName())
+            ```
+
+            Apply the equivalent pattern for MessageBus, Enrollment, Pipeline, GoogleApiSource.
+
+            Add helpers to server.go (not a separate file):
+            ```go
+            // isNotFound reports whether err is a gRPC NotFound status.
+            func isNotFound(err error) bool {
+                return status.Code(err) == codes.NotFound
+            }
+
+            // lastSegment returns the last "/"-delimited segment of a resource name.
+            func lastSegment(name string) string {
+                idx := strings.LastIndex(name, "/")
+                if idx < 0 {
+                    return name
+                }
+                return name[idx+1:]
+            }
+            ```
+
+            ---
+
+            ### Fix 6: Required field validation additions
+
+            In **CreateEnrollment**: after the `req.GetEnrollment() == nil` check, add:
+            ```go
+            if req.GetEnrollment().GetCelMatch() == "" {
+                return nil, status.Errorf(codes.InvalidArgument, "enrollment.cel_match is required")
+            }
+            ```
+
+            In **CreatePipeline**: after the `req.GetPipeline() == nil` check, add:
+            ```go
+            if len(req.GetPipeline().GetDestinations()) == 0 {
+                return nil, status.Errorf(codes.InvalidArgument, "pipeline.destinations must not be empty")
+            }
+            ```
+
+            In **CreateGoogleApiSource**: after the `req.GetGoogleApiSource() == nil` check, add:
+            ```go
+            if req.GetGoogleApiSource().GetDestination() == nil {
+                return nil, status.Errorf(codes.InvalidArgument, "google_api_source.destination is required")
+            }
+            ```
+
+            In **UpdateGoogleChannelConfig**: add name validation immediately after the nil check:
+            ```go
+            if req.GetGoogleChannelConfig().GetName() == "" {
+                return nil, status.Errorf(codes.InvalidArgument, "google_channel_config.name is required")
+            }
+            ```
+
+            ---
+
+            ### Required imports for server.go
+
+            Add these if not already present:
+            - `"google.golang.org/protobuf/proto"` — for proto.Clone in validate_only
+            - `"google.golang.org/protobuf/types/known/emptypb"` — for delete validate_only
+
+            Existing imports already include `"fmt"` and `"strings"`.
+
+            ---
+
+            ### Tests to write
+
+            **File to modify:** `internal/server/server_test.go`
+
+            Add these test functions following the existing `package server` style and using
+            `newTestServer(t)`:
+
+            - `TestCreateTrigger_ValidateOnly`: set `ValidateOnly: true`, assert no error,
+              op.Done==true, and GetTrigger returns NotFound (trigger not persisted).
+            - `TestLROMetadata_Create`: create a trigger, unpack `op.Metadata` as
+              `*eventarcpb.OperationMetadata` (use `anypb.UnmarshalTo`), assert
+              `meta.Verb == "create"` and `meta.ApiVersion == "v1"`.
+            - `TestDeleteTrigger_EtagMismatch`: create a trigger; call DeleteTrigger with
+              `Etag: "wrong-etag"`; assert `codes.Aborted` error.
+            - `TestDeleteTrigger_EtagMatch`: create a trigger; retrieve it to get its etag;
+              call DeleteTrigger with the correct etag; assert success.
+            - `TestDeleteTrigger_AllowMissing`: delete a non-existent trigger with
+              `AllowMissing: true`; assert no error.
+            - `TestUpdateTrigger_AllowMissing`: call UpdateTrigger with `AllowMissing: true`
+              on a non-existent trigger; assert no error; assert trigger now exists via GetTrigger.
+            - `TestDeleteMessageBus_EtagMismatch`: create a message bus; delete with wrong etag;
+              assert `codes.Aborted`.
+            - `TestDeleteMessageBus_AllowMissing`: delete non-existent bus with `AllowMissing: true`;
+              assert success.
+            - `TestUpdateMessageBus_AllowMissing`: update non-existent bus with `AllowMissing: true`;
+              assert success.
+            - `TestCreateEnrollment_MissingCelMatch`: create enrollment without `cel_match`;
+              assert `codes.InvalidArgument`.
+            - `TestCreatePipeline_MissingDestinations`: create pipeline without destinations;
+              assert `codes.InvalidArgument`.
+            - `TestCreateGoogleApiSource_MissingDestination`: create source without destination;
+              assert `codes.InvalidArgument`.
+
+            To unpack OperationMetadata from op.Metadata in tests:
+            ```go
+            import (
+                eventarcpb "cloud.google.com/go/eventarc/apiv1/eventarcpb"
+                "google.golang.org/protobuf/types/known/anypb"
+            )
+            // ...
+            meta := &eventarcpb.OperationMetadata{}
+            if err := op.Metadata.UnmarshalTo(meta); err != nil {
+                t.Fatalf("UnmarshalTo OperationMetadata: %v", err)
+            }
+            ```
+
+            ### Verification gate
+
+            ```
+            go build ./internal/server/...
+            go vet ./internal/server/...
+            go test ./internal/server/... -run "TestCreateTrigger|TestDeleteTrigger|TestUpdateTrigger|TestDeleteMessageBus|TestUpdateMessageBus|TestCreateEnrollment|TestCreatePipeline|TestCreateGoogleApiSource|TestLROMetadata"
+            ```
+
+            ### Constraints
+
+            - Do NOT modify internal/lro/store.go (Agent A) or storage_*.go files (Agents C, E).
+            - Do NOT modify internal/router/router.go (Agent D).
+            - `isNotFound` and `lastSegment` helpers must be defined inline in server.go.
+            - DeleteChannel and DeleteChannelConnection: only add validate_only handling,
+              NOT allow_missing or etag (those fields do not exist on those request types).
+            - For UpdateChannel: only add validate_only handling, NOT allow_missing
+              (UpdateChannelRequest does not have allow_missing per the proto).
+            - Do NOT add ID format regex validation (message_bus_id, pipeline_id, etc.) —
+              the conformance report marks those as minor/P2 and they are out of scope.
+            - For UpdateX validate_only where the resource might not exist, return the error
+              directly without checking allow_missing (validate_only check comes before the
+              allow_missing upsert path).
+          files:
+            - internal/server/server.go
+            - internal/server/server_test.go
+          dependencies:
+            - A
+quality_gates:
+    level: standard
+    gates:
+        - type: build
+          command: go build ./...
+          required: true
+        - type: lint
+          command: go vet ./...
+          required: true
+        - type: test
+          command: go test ./...
+          required: true
+pre_mortem:
+    overall_risk: medium
+    rows:
+        - scenario: |-
+            Agent B's changes are large (20+ call sites, 6 distinct fix categories).
+            A misunderstanding of the validate_only semantics for Update methods could
+            cause incorrect behavior where validate_only is checked after the storage call
+            instead of before it.
+          likelihood: medium
+          impact: medium
+          mitigation: |-
+            The IMPL task for Agent B specifies the order explicitly for Delete methods
+            (7-step sequence) and for Update/Create methods separately. Agent B should
+            implement and test validate_only first (TestCreateTrigger_ValidateOnly) before
+            moving to allow_missing and etag.
+        - scenario: |-
+            lro.Store.CreateDone signature change (Agent A) causes a build failure in
+            server.go if Agent B is applied before Agent A's wave merges. The Wave 2
+            gating prevents this, but if agents are mis-sequenced, all 20 CreateDone
+            calls will fail to compile.
+          likelihood: low
+          impact: high
+          mitigation: |-
+            Wave 2 is gated on Wave 1 completion. Agent B's dependency: [A] annotation
+            ensures the Orchestrator will not launch B until A has merged.
+        - scenario: |-
+            matchPathPattern edge case: ** at end of pattern with zero trailing segments.
+            If matchSegs does not correctly handle the i=0 iteration (** matches zero segments),
+            patterns like "//prefix/**" may fail to match "//prefix/segment".
+          likelihood: medium
+          impact: medium
+          mitigation: |-
+            Agent D's task includes a dedicated test for ** matching zero segments
+            (TestMatch_MatchPathPatternOperator_DoubleWildcard). The matchSegs pseudocode
+            in the task iterates from i=0 to len(vSegs) inclusive, covering zero consumption.
+        - scenario: |-
+            UpdateEnrollment immutability: removing message_bus from the else branch
+            may cause existing tests that rely on no-mask updates setting message_bus to fail.
+            Agent E must audit the existing storage_messagebus_test.go for such tests.
+          likelihood: medium
+          impact: low
+          mitigation: |-
+            Agent E's task explicitly notes: "TestUpdateEnrollment_NoMask_MessageBusPreserved"
+            documents the new behavior. Agent E must review existing tests and update any
+            that previously expected message_bus to change via no-mask updates.
+        - scenario: |-
+            Channel.ActivationToken field may not exist on the proto version in use.
+            If the field is absent, Agent C's code will fail to compile.
+          likelihood: low
+          impact: high
+          mitigation: |-
+            The conformance report (CHANNEL-1) confirms the field exists. Agent C is
+            instructed to verify with `go doc` before implementing. If the field is absent,
+            Agent C should skip the ActivationToken assignment and document the omission.
+        - scenario: |-
+            proto.Clone is not imported in server.go currently. Agent B needs it for
+            validate_only Create paths. A missing import causes compile failure.
+          likelihood: low
+          impact: low
+          mitigation: |-
+            Agent B's task lists required imports explicitly. The existing imports do not
+            include proto directly but the storage files do; Agent B must add it to server.go.
+critic_report:
+    verdict: PASS
+    agent_reviews: {}
+    summary: 'All 6 checks pass. Warning resolved: added internal/router/match_test.go to Agent D file_ownership.'
+    reviewed_at: "2026-04-03T18:11:14Z"
+    issue_count: 0
+state: SCOUT_PENDING
+injection_method: hook
