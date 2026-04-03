@@ -206,6 +206,74 @@ func TestStorageGetGoogleApiSource_NotFound(t *testing.T) {
 	}
 }
 
+// TestUpdatePipeline_WildcardMask verifies that a wildcard mask ("*") updates
+// all mutable fields of a Pipeline.
+func TestUpdatePipeline_WildcardMask(t *testing.T) {
+	s := newTestStorage(t)
+	ctx := context.Background()
+
+	created, err := s.CreatePipeline(ctx, testParent, "pl-wc", &eventarcpb.Pipeline{
+		DisplayName: "Original",
+		Labels:      map[string]string{"stage": "dev"},
+	})
+	if err != nil {
+		t.Fatalf("CreatePipeline: %v", err)
+	}
+
+	updated, err := s.UpdatePipeline(ctx, &eventarcpb.Pipeline{
+		Name:        created.GetName(),
+		DisplayName: "Updated",
+		Labels:      map[string]string{"stage": "prod"},
+	}, &fieldmaskpb.FieldMask{Paths: []string{"*"}})
+	if err != nil {
+		t.Fatalf("UpdatePipeline wildcard: %v", err)
+	}
+
+	if updated.GetDisplayName() != "Updated" {
+		t.Errorf("DisplayName = %q, want %q", updated.GetDisplayName(), "Updated")
+	}
+	if updated.GetLabels()["stage"] != "prod" {
+		t.Errorf("Labels[stage] = %q, want %q", updated.GetLabels()["stage"], "prod")
+	}
+}
+
+// TestUpdateGoogleApiSource_WildcardMask verifies that a wildcard mask ("*")
+// updates all mutable fields of a GoogleApiSource.
+func TestUpdateGoogleApiSource_WildcardMask(t *testing.T) {
+	s := newTestStorage(t)
+	ctx := context.Background()
+
+	src := &eventarcpb.GoogleApiSource{
+		DisplayName: "Original",
+		Destination: testParent + "/messageBuses/mb",
+	}
+	created, err := s.CreateGoogleApiSource(ctx, testParent, "src-wc", src)
+	if err != nil {
+		t.Fatalf("CreateGoogleApiSource: %v", err)
+	}
+
+	newDest := testParent + "/messageBuses/mb-new"
+	updated, err := s.UpdateGoogleApiSource(ctx, &eventarcpb.GoogleApiSource{
+		Name:        created.GetName(),
+		DisplayName: "Updated",
+		Destination: newDest,
+		Labels:      map[string]string{"key": "val"},
+	}, &fieldmaskpb.FieldMask{Paths: []string{"*"}})
+	if err != nil {
+		t.Fatalf("UpdateGoogleApiSource wildcard: %v", err)
+	}
+
+	if updated.GetDisplayName() != "Updated" {
+		t.Errorf("DisplayName = %q, want %q", updated.GetDisplayName(), "Updated")
+	}
+	if updated.GetDestination() != newDest {
+		t.Errorf("Destination = %q, want %q", updated.GetDestination(), newDest)
+	}
+	if updated.GetLabels()["key"] != "val" {
+		t.Errorf("Labels[key] = %q, want %q", updated.GetLabels()["key"], "val")
+	}
+}
+
 // TestStorageUpdateGoogleApiSource_Success verifies that updating display_name
 // bumps UpdateTime and preserves other fields.
 func TestStorageUpdateGoogleApiSource_Success(t *testing.T) {
