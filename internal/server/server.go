@@ -27,6 +27,8 @@ import (
 	"google.golang.org/genproto/googleapis/rpc/errdetails"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/emptypb"
 )
 
 // Server implements the EventarcServer interface.
@@ -175,6 +177,20 @@ func parentFromResource(name string) string {
 	return name[:idx]
 }
 
+// isNotFound reports whether err is a gRPC NotFound status.
+func isNotFound(err error) bool {
+	return status.Code(err) == codes.NotFound
+}
+
+// lastSegment returns the last "/"-delimited segment of a resource name.
+func lastSegment(name string) string {
+	idx := strings.LastIndex(name, "/")
+	if idx < 0 {
+		return name
+	}
+	return name[idx+1:]
+}
+
 // -------------------------------------------------------------------------
 // Trigger RPCs
 // -------------------------------------------------------------------------
@@ -251,6 +267,12 @@ func (s *Server) CreateTrigger(ctx context.Context, req *eventarcpb.CreateTrigge
 		return nil, err
 	}
 
+	if req.GetValidateOnly() {
+		synthetic := proto.Clone(req.GetTrigger()).(*eventarcpb.Trigger)
+		synthetic.Name = fmt.Sprintf("%s/triggers/%s", req.GetParent(), req.GetTriggerId())
+		return s.lro.CreateDone(req.GetParent(), synthetic, "create", synthetic.Name)
+	}
+
 	trigger, err := s.storage.CreateTrigger(ctx, req.GetParent(), req.GetTriggerId(), req.GetTrigger())
 	if err != nil {
 		return nil, err
@@ -271,12 +293,28 @@ func (s *Server) UpdateTrigger(ctx context.Context, req *eventarcpb.UpdateTrigge
 		return nil, err
 	}
 
-	trigger, err := s.storage.UpdateTrigger(ctx, req.GetTrigger(), req.GetUpdateMask())
-	if err != nil {
-		return nil, err
+	if req.GetValidateOnly() {
+		existing, err := s.storage.GetTrigger(ctx, req.GetTrigger().GetName())
+		if err != nil {
+			return nil, err
+		}
+		return s.lro.CreateDone(parent, existing, "update", req.GetTrigger().GetName())
 	}
 
-	return s.lro.CreateDone(parent, trigger, "update", trigger.GetName())
+	trigger, err := s.storage.UpdateTrigger(ctx, req.GetTrigger(), req.GetUpdateMask())
+	if err != nil {
+		if req.GetAllowMissing() && isNotFound(err) {
+			trigger, err = s.storage.CreateTrigger(ctx,
+				parent, lastSegment(req.GetTrigger().GetName()), req.GetTrigger())
+			if err != nil {
+				return nil, err
+			}
+		} else {
+			return nil, err
+		}
+	}
+
+	return s.lro.CreateDone(parent, trigger, "update", req.GetTrigger().GetName())
 }
 
 // DeleteTrigger deletes an existing trigger and returns a completed LRO.
@@ -291,15 +329,33 @@ func (s *Server) DeleteTrigger(ctx context.Context, req *eventarcpb.DeleteTrigge
 		return nil, err
 	}
 
-	trigger, err := s.storage.GetTrigger(ctx, req.GetName())
+	if req.GetValidateOnly() {
+		_, err := s.storage.GetTrigger(ctx, req.GetName())
+		if err != nil {
+			return nil, err
+		}
+		return s.lro.CreateDone(parent, &emptypb.Empty{}, "delete", req.GetName())
+	}
+
+	existing, err := s.storage.GetTrigger(ctx, req.GetName())
 	if err != nil {
+		if req.GetAllowMissing() && isNotFound(err) {
+			return s.lro.CreateDone(parent, &emptypb.Empty{}, "delete", req.GetName())
+		}
 		return nil, err
+	}
+	if reqEtag := req.GetEtag(); reqEtag != "" {
+		if existing.GetEtag() != reqEtag {
+			return nil, status.Errorf(codes.Aborted,
+				"etag mismatch: provided %q does not match stored %q",
+				reqEtag, existing.GetEtag())
+		}
 	}
 	if err := s.storage.DeleteTrigger(ctx, req.GetName()); err != nil {
 		return nil, err
 	}
 
-	return s.lro.CreateDone(parent, trigger, "delete", trigger.GetName())
+	return s.lro.CreateDone(parent, existing, "delete", req.GetName())
 }
 
 // -------------------------------------------------------------------------
@@ -394,6 +450,11 @@ func (s *Server) CreateChannel(ctx context.Context, req *eventarcpb.CreateChanne
 	if err := s.checkPermission(ctx, perm("CreateChannel"), req.GetParent()); err != nil {
 		return nil, err
 	}
+	if req.GetValidateOnly() {
+		synthetic := proto.Clone(req.GetChannel()).(*eventarcpb.Channel)
+		synthetic.Name = fmt.Sprintf("%s/channels/%s", req.GetParent(), req.GetChannelId())
+		return s.lro.CreateDone(req.GetParent(), synthetic, "create", synthetic.Name)
+	}
 	channel, err := s.storage.CreateChannel(ctx, req.GetParent(), req.GetChannelId(), req.GetChannel())
 	if err != nil {
 		return nil, err
@@ -410,6 +471,13 @@ func (s *Server) UpdateChannel(ctx context.Context, req *eventarcpb.UpdateChanne
 	if err := s.checkPermission(ctx, perm("UpdateChannel"), req.GetChannel().GetName()); err != nil {
 		return nil, err
 	}
+	if req.GetValidateOnly() {
+		existing, err := s.storage.GetChannel(ctx, req.GetChannel().GetName())
+		if err != nil {
+			return nil, err
+		}
+		return s.lro.CreateDone(parent, existing, "update", req.GetChannel().GetName())
+	}
 	channel, err := s.storage.UpdateChannel(ctx, req.GetChannel(), req.GetUpdateMask())
 	if err != nil {
 		return nil, err
@@ -425,6 +493,13 @@ func (s *Server) DeleteChannel(ctx context.Context, req *eventarcpb.DeleteChanne
 	parent := parentFromResource(req.GetName())
 	if err := s.checkPermission(ctx, perm("DeleteChannel"), req.GetName()); err != nil {
 		return nil, err
+	}
+	if req.GetValidateOnly() {
+		_, err := s.storage.GetChannel(ctx, req.GetName())
+		if err != nil {
+			return nil, err
+		}
+		return s.lro.CreateDone(parent, &emptypb.Empty{}, "delete", req.GetName())
 	}
 	channel, err := s.storage.GetChannel(ctx, req.GetName())
 	if err != nil {
@@ -506,7 +581,7 @@ func (s *Server) DeleteChannelConnection(ctx context.Context, req *eventarcpb.De
 	if err := s.storage.DeleteChannelConnection(ctx, req.GetName()); err != nil {
 		return nil, err
 	}
-	return s.lro.CreateDone(parent, conn, "update", conn.GetName())
+	return s.lro.CreateDone(parent, conn, "delete", conn.GetName())
 }
 
 // -------------------------------------------------------------------------
@@ -528,6 +603,9 @@ func (s *Server) GetGoogleChannelConfig(ctx context.Context, req *eventarcpb.Get
 func (s *Server) UpdateGoogleChannelConfig(ctx context.Context, req *eventarcpb.UpdateGoogleChannelConfigRequest) (*eventarcpb.GoogleChannelConfig, error) {
 	if req.GetGoogleChannelConfig() == nil {
 		return nil, status.Error(codes.InvalidArgument, "google_channel_config is required")
+	}
+	if req.GetGoogleChannelConfig().GetName() == "" {
+		return nil, status.Errorf(codes.InvalidArgument, "google_channel_config.name is required")
 	}
 	if err := s.checkPermission(ctx, perm("UpdateGoogleChannelConfig"), req.GetGoogleChannelConfig().GetName()); err != nil {
 		return nil, err
@@ -600,6 +678,11 @@ func (s *Server) CreateMessageBus(ctx context.Context, req *eventarcpb.CreateMes
 	if err := s.checkPermission(ctx, perm("CreateMessageBus"), req.GetParent()); err != nil {
 		return nil, err
 	}
+	if req.GetValidateOnly() {
+		synthetic := proto.Clone(req.GetMessageBus()).(*eventarcpb.MessageBus)
+		synthetic.Name = fmt.Sprintf("%s/messageBuses/%s", req.GetParent(), req.GetMessageBusId())
+		return s.lro.CreateDone(req.GetParent(), synthetic, "create", synthetic.Name)
+	}
 	bus, err := s.storage.CreateMessageBus(ctx, req.GetParent(), req.GetMessageBusId(), req.GetMessageBus())
 	if err != nil {
 		return nil, err
@@ -616,11 +699,26 @@ func (s *Server) UpdateMessageBus(ctx context.Context, req *eventarcpb.UpdateMes
 	if err := s.checkPermission(ctx, perm("UpdateMessageBus"), req.GetMessageBus().GetName()); err != nil {
 		return nil, err
 	}
+	if req.GetValidateOnly() {
+		existing, err := s.storage.GetMessageBus(ctx, req.GetMessageBus().GetName())
+		if err != nil {
+			return nil, err
+		}
+		return s.lro.CreateDone(parent, existing, "update", req.GetMessageBus().GetName())
+	}
 	bus, err := s.storage.UpdateMessageBus(ctx, req.GetMessageBus(), req.GetUpdateMask())
 	if err != nil {
-		return nil, err
+		if req.GetAllowMissing() && isNotFound(err) {
+			bus, err = s.storage.CreateMessageBus(ctx,
+				parent, lastSegment(req.GetMessageBus().GetName()), req.GetMessageBus())
+			if err != nil {
+				return nil, err
+			}
+		} else {
+			return nil, err
+		}
 	}
-	return s.lro.CreateDone(parent, bus, "update", bus.GetName())
+	return s.lro.CreateDone(parent, bus, "update", req.GetMessageBus().GetName())
 }
 
 // DeleteMessageBus deletes an existing message bus and returns a completed LRO.
@@ -632,14 +730,31 @@ func (s *Server) DeleteMessageBus(ctx context.Context, req *eventarcpb.DeleteMes
 	if err := s.checkPermission(ctx, perm("DeleteMessageBus"), req.GetName()); err != nil {
 		return nil, err
 	}
-	bus, err := s.storage.GetMessageBus(ctx, req.GetName())
+	if req.GetValidateOnly() {
+		_, err := s.storage.GetMessageBus(ctx, req.GetName())
+		if err != nil {
+			return nil, err
+		}
+		return s.lro.CreateDone(parent, &emptypb.Empty{}, "delete", req.GetName())
+	}
+	existing, err := s.storage.GetMessageBus(ctx, req.GetName())
 	if err != nil {
+		if req.GetAllowMissing() && isNotFound(err) {
+			return s.lro.CreateDone(parent, &emptypb.Empty{}, "delete", req.GetName())
+		}
 		return nil, err
+	}
+	if reqEtag := req.GetEtag(); reqEtag != "" {
+		if existing.GetEtag() != reqEtag {
+			return nil, status.Errorf(codes.Aborted,
+				"etag mismatch: provided %q does not match stored %q",
+				reqEtag, existing.GetEtag())
+		}
 	}
 	if err := s.storage.DeleteMessageBus(ctx, req.GetName()); err != nil {
 		return nil, err
 	}
-	return s.lro.CreateDone(parent, bus, "delete", bus.GetName())
+	return s.lro.CreateDone(parent, existing, "delete", req.GetName())
 }
 
 // -------------------------------------------------------------------------
@@ -686,8 +801,16 @@ func (s *Server) CreateEnrollment(ctx context.Context, req *eventarcpb.CreateEnr
 	if req.GetEnrollment() == nil {
 		return nil, status.Error(codes.InvalidArgument, "enrollment is required")
 	}
+	if req.GetEnrollment().GetCelMatch() == "" {
+		return nil, status.Errorf(codes.InvalidArgument, "enrollment.cel_match is required")
+	}
 	if err := s.checkPermission(ctx, perm("CreateEnrollment"), req.GetParent()); err != nil {
 		return nil, err
+	}
+	if req.GetValidateOnly() {
+		synthetic := proto.Clone(req.GetEnrollment()).(*eventarcpb.Enrollment)
+		synthetic.Name = fmt.Sprintf("%s/enrollments/%s", req.GetParent(), req.GetEnrollmentId())
+		return s.lro.CreateDone(req.GetParent(), synthetic, "create", synthetic.Name)
 	}
 	enrollment, err := s.storage.CreateEnrollment(ctx, req.GetParent(), req.GetEnrollmentId(), req.GetEnrollment())
 	if err != nil {
@@ -705,11 +828,26 @@ func (s *Server) UpdateEnrollment(ctx context.Context, req *eventarcpb.UpdateEnr
 	if err := s.checkPermission(ctx, perm("UpdateEnrollment"), req.GetEnrollment().GetName()); err != nil {
 		return nil, err
 	}
+	if req.GetValidateOnly() {
+		existing, err := s.storage.GetEnrollment(ctx, req.GetEnrollment().GetName())
+		if err != nil {
+			return nil, err
+		}
+		return s.lro.CreateDone(parent, existing, "update", req.GetEnrollment().GetName())
+	}
 	enrollment, err := s.storage.UpdateEnrollment(ctx, req.GetEnrollment(), req.GetUpdateMask())
 	if err != nil {
-		return nil, err
+		if req.GetAllowMissing() && isNotFound(err) {
+			enrollment, err = s.storage.CreateEnrollment(ctx,
+				parent, lastSegment(req.GetEnrollment().GetName()), req.GetEnrollment())
+			if err != nil {
+				return nil, err
+			}
+		} else {
+			return nil, err
+		}
 	}
-	return s.lro.CreateDone(parent, enrollment, "update", enrollment.GetName())
+	return s.lro.CreateDone(parent, enrollment, "update", req.GetEnrollment().GetName())
 }
 
 // DeleteEnrollment deletes an existing enrollment and returns a completed LRO.
@@ -721,14 +859,31 @@ func (s *Server) DeleteEnrollment(ctx context.Context, req *eventarcpb.DeleteEnr
 	if err := s.checkPermission(ctx, perm("DeleteEnrollment"), req.GetName()); err != nil {
 		return nil, err
 	}
-	enrollment, err := s.storage.GetEnrollment(ctx, req.GetName())
+	if req.GetValidateOnly() {
+		_, err := s.storage.GetEnrollment(ctx, req.GetName())
+		if err != nil {
+			return nil, err
+		}
+		return s.lro.CreateDone(parent, &emptypb.Empty{}, "delete", req.GetName())
+	}
+	existing, err := s.storage.GetEnrollment(ctx, req.GetName())
 	if err != nil {
+		if req.GetAllowMissing() && isNotFound(err) {
+			return s.lro.CreateDone(parent, &emptypb.Empty{}, "delete", req.GetName())
+		}
 		return nil, err
+	}
+	if reqEtag := req.GetEtag(); reqEtag != "" {
+		if existing.GetEtag() != reqEtag {
+			return nil, status.Errorf(codes.Aborted,
+				"etag mismatch: provided %q does not match stored %q",
+				reqEtag, existing.GetEtag())
+		}
 	}
 	if err := s.storage.DeleteEnrollment(ctx, req.GetName()); err != nil {
 		return nil, err
 	}
-	return s.lro.CreateDone(parent, enrollment, "delete", enrollment.GetName())
+	return s.lro.CreateDone(parent, existing, "delete", req.GetName())
 }
 
 // -------------------------------------------------------------------------
@@ -775,8 +930,16 @@ func (s *Server) CreatePipeline(ctx context.Context, req *eventarcpb.CreatePipel
 	if req.GetPipeline() == nil {
 		return nil, status.Error(codes.InvalidArgument, "pipeline is required")
 	}
+	if len(req.GetPipeline().GetDestinations()) == 0 {
+		return nil, status.Errorf(codes.InvalidArgument, "pipeline.destinations must not be empty")
+	}
 	if err := s.checkPermission(ctx, perm("CreatePipeline"), req.GetParent()); err != nil {
 		return nil, err
+	}
+	if req.GetValidateOnly() {
+		synthetic := proto.Clone(req.GetPipeline()).(*eventarcpb.Pipeline)
+		synthetic.Name = fmt.Sprintf("%s/pipelines/%s", req.GetParent(), req.GetPipelineId())
+		return s.lro.CreateDone(req.GetParent(), synthetic, "create", synthetic.Name)
 	}
 	pipeline, err := s.storage.CreatePipeline(ctx, req.GetParent(), req.GetPipelineId(), req.GetPipeline())
 	if err != nil {
@@ -794,11 +957,26 @@ func (s *Server) UpdatePipeline(ctx context.Context, req *eventarcpb.UpdatePipel
 	if err := s.checkPermission(ctx, perm("UpdatePipeline"), req.GetPipeline().GetName()); err != nil {
 		return nil, err
 	}
+	if req.GetValidateOnly() {
+		existing, err := s.storage.GetPipeline(ctx, req.GetPipeline().GetName())
+		if err != nil {
+			return nil, err
+		}
+		return s.lro.CreateDone(parent, existing, "update", req.GetPipeline().GetName())
+	}
 	pipeline, err := s.storage.UpdatePipeline(ctx, req.GetPipeline(), req.GetUpdateMask())
 	if err != nil {
-		return nil, err
+		if req.GetAllowMissing() && isNotFound(err) {
+			pipeline, err = s.storage.CreatePipeline(ctx,
+				parent, lastSegment(req.GetPipeline().GetName()), req.GetPipeline())
+			if err != nil {
+				return nil, err
+			}
+		} else {
+			return nil, err
+		}
 	}
-	return s.lro.CreateDone(parent, pipeline, "update", pipeline.GetName())
+	return s.lro.CreateDone(parent, pipeline, "update", req.GetPipeline().GetName())
 }
 
 // DeletePipeline deletes an existing pipeline and returns a completed LRO.
@@ -810,14 +988,31 @@ func (s *Server) DeletePipeline(ctx context.Context, req *eventarcpb.DeletePipel
 	if err := s.checkPermission(ctx, perm("DeletePipeline"), req.GetName()); err != nil {
 		return nil, err
 	}
-	pipeline, err := s.storage.GetPipeline(ctx, req.GetName())
+	if req.GetValidateOnly() {
+		_, err := s.storage.GetPipeline(ctx, req.GetName())
+		if err != nil {
+			return nil, err
+		}
+		return s.lro.CreateDone(parent, &emptypb.Empty{}, "delete", req.GetName())
+	}
+	existing, err := s.storage.GetPipeline(ctx, req.GetName())
 	if err != nil {
+		if req.GetAllowMissing() && isNotFound(err) {
+			return s.lro.CreateDone(parent, &emptypb.Empty{}, "delete", req.GetName())
+		}
 		return nil, err
+	}
+	if reqEtag := req.GetEtag(); reqEtag != "" {
+		if existing.GetEtag() != reqEtag {
+			return nil, status.Errorf(codes.Aborted,
+				"etag mismatch: provided %q does not match stored %q",
+				reqEtag, existing.GetEtag())
+		}
 	}
 	if err := s.storage.DeletePipeline(ctx, req.GetName()); err != nil {
 		return nil, err
 	}
-	return s.lro.CreateDone(parent, pipeline, "delete", pipeline.GetName())
+	return s.lro.CreateDone(parent, existing, "delete", req.GetName())
 }
 
 // -------------------------------------------------------------------------
@@ -864,8 +1059,16 @@ func (s *Server) CreateGoogleApiSource(ctx context.Context, req *eventarcpb.Crea
 	if req.GetGoogleApiSource() == nil {
 		return nil, status.Error(codes.InvalidArgument, "google_api_source is required")
 	}
+	if req.GetGoogleApiSource().GetDestination() == "" {
+		return nil, status.Errorf(codes.InvalidArgument, "google_api_source.destination is required")
+	}
 	if err := s.checkPermission(ctx, perm("CreateGoogleApiSource"), req.GetParent()); err != nil {
 		return nil, err
+	}
+	if req.GetValidateOnly() {
+		synthetic := proto.Clone(req.GetGoogleApiSource()).(*eventarcpb.GoogleApiSource)
+		synthetic.Name = fmt.Sprintf("%s/googleApiSources/%s", req.GetParent(), req.GetGoogleApiSourceId())
+		return s.lro.CreateDone(req.GetParent(), synthetic, "create", synthetic.Name)
 	}
 	source, err := s.storage.CreateGoogleApiSource(ctx, req.GetParent(), req.GetGoogleApiSourceId(), req.GetGoogleApiSource())
 	if err != nil {
@@ -883,11 +1086,26 @@ func (s *Server) UpdateGoogleApiSource(ctx context.Context, req *eventarcpb.Upda
 	if err := s.checkPermission(ctx, perm("UpdateGoogleApiSource"), req.GetGoogleApiSource().GetName()); err != nil {
 		return nil, err
 	}
+	if req.GetValidateOnly() {
+		existing, err := s.storage.GetGoogleApiSource(ctx, req.GetGoogleApiSource().GetName())
+		if err != nil {
+			return nil, err
+		}
+		return s.lro.CreateDone(parent, existing, "update", req.GetGoogleApiSource().GetName())
+	}
 	source, err := s.storage.UpdateGoogleApiSource(ctx, req.GetGoogleApiSource(), req.GetUpdateMask())
 	if err != nil {
-		return nil, err
+		if req.GetAllowMissing() && isNotFound(err) {
+			source, err = s.storage.CreateGoogleApiSource(ctx,
+				parent, lastSegment(req.GetGoogleApiSource().GetName()), req.GetGoogleApiSource())
+			if err != nil {
+				return nil, err
+			}
+		} else {
+			return nil, err
+		}
 	}
-	return s.lro.CreateDone(parent, source, "update", source.GetName())
+	return s.lro.CreateDone(parent, source, "update", req.GetGoogleApiSource().GetName())
 }
 
 // DeleteGoogleApiSource deletes an existing google api source and returns a completed LRO.
@@ -899,12 +1117,29 @@ func (s *Server) DeleteGoogleApiSource(ctx context.Context, req *eventarcpb.Dele
 	if err := s.checkPermission(ctx, perm("DeleteGoogleApiSource"), req.GetName()); err != nil {
 		return nil, err
 	}
-	source, err := s.storage.GetGoogleApiSource(ctx, req.GetName())
+	if req.GetValidateOnly() {
+		_, err := s.storage.GetGoogleApiSource(ctx, req.GetName())
+		if err != nil {
+			return nil, err
+		}
+		return s.lro.CreateDone(parent, &emptypb.Empty{}, "delete", req.GetName())
+	}
+	existing, err := s.storage.GetGoogleApiSource(ctx, req.GetName())
 	if err != nil {
+		if req.GetAllowMissing() && isNotFound(err) {
+			return s.lro.CreateDone(parent, &emptypb.Empty{}, "delete", req.GetName())
+		}
 		return nil, err
+	}
+	if reqEtag := req.GetEtag(); reqEtag != "" {
+		if existing.GetEtag() != reqEtag {
+			return nil, status.Errorf(codes.Aborted,
+				"etag mismatch: provided %q does not match stored %q",
+				reqEtag, existing.GetEtag())
+		}
 	}
 	if err := s.storage.DeleteGoogleApiSource(ctx, req.GetName()); err != nil {
 		return nil, err
 	}
-	return s.lro.CreateDone(parent, source, "delete", source.GetName())
+	return s.lro.CreateDone(parent, existing, "delete", req.GetName())
 }

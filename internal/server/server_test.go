@@ -492,7 +492,7 @@ func TestCreateEnrollment_Success(t *testing.T) {
 	op, err := srv.CreateEnrollment(ctx, &eventarcpb.CreateEnrollmentRequest{
 		Parent:       parent,
 		EnrollmentId: "my-enrollment",
-		Enrollment:   &eventarcpb.Enrollment{},
+		Enrollment:   &eventarcpb.Enrollment{CelMatch: "message.type == \"test\""},
 	})
 	if err != nil {
 		t.Fatalf("CreateEnrollment: %v", err)
@@ -512,9 +512,29 @@ func TestCreateEnrollment_Success(t *testing.T) {
 	}
 }
 
+// minimalEnrollment returns an Enrollment with required fields for creation.
+func minimalEnrollment() *eventarcpb.Enrollment {
+	return &eventarcpb.Enrollment{
+		CelMatch: "message.type == \"test\"",
+	}
+}
+
 // -------------------------------------------------------------------------
 // Pipeline tests
 // -------------------------------------------------------------------------
+
+// minimalPipeline returns a Pipeline with required fields for creation.
+func minimalPipeline() *eventarcpb.Pipeline {
+	return &eventarcpb.Pipeline{
+		Destinations: []*eventarcpb.Pipeline_Destination{
+			{
+				DestinationDescriptor: &eventarcpb.Pipeline_Destination_HttpEndpoint_{
+					HttpEndpoint: &eventarcpb.Pipeline_Destination_HttpEndpoint{Uri: "http://localhost:8080/events"},
+				},
+			},
+		},
+	}
+}
 
 func TestCreatePipeline_Success(t *testing.T) {
 	ctx := context.Background()
@@ -524,7 +544,7 @@ func TestCreatePipeline_Success(t *testing.T) {
 	op, err := srv.CreatePipeline(ctx, &eventarcpb.CreatePipelineRequest{
 		Parent:     parent,
 		PipelineId: "my-pipeline",
-		Pipeline:   &eventarcpb.Pipeline{},
+		Pipeline:   minimalPipeline(),
 	})
 	if err != nil {
 		t.Fatalf("CreatePipeline: %v", err)
@@ -548,6 +568,13 @@ func TestCreatePipeline_Success(t *testing.T) {
 // GoogleApiSource tests
 // -------------------------------------------------------------------------
 
+// minimalGoogleApiSource returns a GoogleApiSource with required fields for creation.
+func minimalGoogleApiSource() *eventarcpb.GoogleApiSource {
+	return &eventarcpb.GoogleApiSource{
+		Destination: "projects/my-project/locations/us-central1/messageBuses/my-bus",
+	}
+}
+
 func TestCreateGoogleApiSource_Success(t *testing.T) {
 	ctx := context.Background()
 	srv := newTestServer(t)
@@ -556,7 +583,7 @@ func TestCreateGoogleApiSource_Success(t *testing.T) {
 	op, err := srv.CreateGoogleApiSource(ctx, &eventarcpb.CreateGoogleApiSourceRequest{
 		Parent:            parent,
 		GoogleApiSourceId: "my-source",
-		GoogleApiSource:   &eventarcpb.GoogleApiSource{},
+		GoogleApiSource:   minimalGoogleApiSource(),
 	})
 	if err != nil {
 		t.Fatalf("CreateGoogleApiSource: %v", err)
@@ -643,5 +670,319 @@ func TestCreateTrigger_NoEventFilters(t *testing.T) {
 	}
 	if st.Code() != codes.InvalidArgument {
 		t.Errorf("expected InvalidArgument, got %v", st.Code())
+	}
+}
+
+// -------------------------------------------------------------------------
+// Conformance fix tests: validate_only, allow_missing, etag, required fields
+// -------------------------------------------------------------------------
+
+// TestCreateTrigger_ValidateOnly verifies that validate_only=true returns a
+// synthetic LRO without persisting the trigger.
+func TestCreateTrigger_ValidateOnly(t *testing.T) {
+	ctx := context.Background()
+	srv := newTestServer(t)
+
+	parent := "projects/p/locations/l"
+	op, err := srv.CreateTrigger(ctx, &eventarcpb.CreateTriggerRequest{
+		Parent:       parent,
+		TriggerId:    "vo-trigger",
+		Trigger:      minimalTrigger(),
+		ValidateOnly: true,
+	})
+	if err != nil {
+		t.Fatalf("CreateTrigger(validate_only): %v", err)
+	}
+	if op == nil {
+		t.Fatal("expected non-nil operation")
+	}
+	if !op.Done {
+		t.Errorf("expected Done=true for validate_only LRO")
+	}
+	// The trigger must NOT have been persisted.
+	_, err = srv.GetTrigger(ctx, &eventarcpb.GetTriggerRequest{
+		Name: parent + "/triggers/vo-trigger",
+	})
+	if err == nil {
+		t.Fatal("expected NotFound after validate_only create, got nil error")
+	}
+	st, _ := status.FromError(err)
+	if st.Code() != codes.NotFound {
+		t.Errorf("expected NotFound, got %s", st.Code())
+	}
+}
+
+// TestLROMetadata_Create verifies that the LRO metadata contains correct
+// verb and api_version fields after creating a trigger.
+func TestLROMetadata_Create(t *testing.T) {
+	ctx := context.Background()
+	srv := newTestServer(t)
+
+	parent := "projects/p/locations/l"
+	op, err := srv.CreateTrigger(ctx, &eventarcpb.CreateTriggerRequest{
+		Parent:    parent,
+		TriggerId: "meta-trigger",
+		Trigger:   minimalTrigger(),
+	})
+	if err != nil {
+		t.Fatalf("CreateTrigger: %v", err)
+	}
+	if op.Metadata == nil {
+		t.Fatal("expected non-nil op.Metadata")
+	}
+	meta := &eventarcpb.OperationMetadata{}
+	if err := op.Metadata.UnmarshalTo(meta); err != nil {
+		t.Fatalf("UnmarshalTo OperationMetadata: %v", err)
+	}
+	if meta.Verb != "create" {
+		t.Errorf("expected Verb=%q, got %q", "create", meta.Verb)
+	}
+	if meta.ApiVersion != "v1" {
+		t.Errorf("expected ApiVersion=%q, got %q", "v1", meta.ApiVersion)
+	}
+}
+
+// TestDeleteTrigger_EtagMismatch verifies that DeleteTrigger returns Aborted
+// when the provided etag does not match the stored etag.
+func TestDeleteTrigger_EtagMismatch(t *testing.T) {
+	ctx := context.Background()
+	srv := newTestServer(t)
+
+	parent := "projects/p/locations/l"
+	triggerName := parent + "/triggers/etag-trigger"
+	_, err := srv.CreateTrigger(ctx, &eventarcpb.CreateTriggerRequest{
+		Parent:    parent,
+		TriggerId: "etag-trigger",
+		Trigger:   minimalTrigger(),
+	})
+	if err != nil {
+		t.Fatalf("CreateTrigger: %v", err)
+	}
+
+	_, err = srv.DeleteTrigger(ctx, &eventarcpb.DeleteTriggerRequest{
+		Name: triggerName,
+		Etag: "wrong-etag",
+	})
+	if err == nil {
+		t.Fatal("expected error for etag mismatch, got nil")
+	}
+	st, _ := status.FromError(err)
+	if st.Code() != codes.Aborted {
+		t.Errorf("expected Aborted, got %s", st.Code())
+	}
+}
+
+// TestDeleteTrigger_EtagMatch verifies that DeleteTrigger succeeds when the
+// provided etag matches the stored etag.
+func TestDeleteTrigger_EtagMatch(t *testing.T) {
+	ctx := context.Background()
+	srv := newTestServer(t)
+
+	parent := "projects/p/locations/l"
+	triggerName := parent + "/triggers/etag-match-trigger"
+	_, err := srv.CreateTrigger(ctx, &eventarcpb.CreateTriggerRequest{
+		Parent:    parent,
+		TriggerId: "etag-match-trigger",
+		Trigger:   minimalTrigger(),
+	})
+	if err != nil {
+		t.Fatalf("CreateTrigger: %v", err)
+	}
+
+	// Retrieve to get the stored etag.
+	trigger, err := srv.GetTrigger(ctx, &eventarcpb.GetTriggerRequest{Name: triggerName})
+	if err != nil {
+		t.Fatalf("GetTrigger: %v", err)
+	}
+
+	op, err := srv.DeleteTrigger(ctx, &eventarcpb.DeleteTriggerRequest{
+		Name: triggerName,
+		Etag: trigger.GetEtag(),
+	})
+	if err != nil {
+		t.Fatalf("DeleteTrigger with correct etag: %v", err)
+	}
+	if !op.Done {
+		t.Errorf("expected Done=true")
+	}
+}
+
+// TestDeleteTrigger_AllowMissing verifies that DeleteTrigger with
+// allow_missing=true on a non-existent trigger returns success.
+func TestDeleteTrigger_AllowMissing(t *testing.T) {
+	ctx := context.Background()
+	srv := newTestServer(t)
+
+	op, err := srv.DeleteTrigger(ctx, &eventarcpb.DeleteTriggerRequest{
+		Name:         "projects/p/locations/l/triggers/does-not-exist",
+		AllowMissing: true,
+	})
+	if err != nil {
+		t.Fatalf("DeleteTrigger(allow_missing): %v", err)
+	}
+	if !op.Done {
+		t.Errorf("expected Done=true")
+	}
+}
+
+// TestUpdateTrigger_AllowMissing verifies that UpdateTrigger with
+// allow_missing=true on a non-existent trigger creates it (upsert).
+func TestUpdateTrigger_AllowMissing(t *testing.T) {
+	ctx := context.Background()
+	srv := newTestServer(t)
+
+	parent := "projects/p/locations/l"
+	triggerName := parent + "/triggers/new-via-update"
+
+	op, err := srv.UpdateTrigger(ctx, &eventarcpb.UpdateTriggerRequest{
+		Trigger:      &eventarcpb.Trigger{Name: triggerName},
+		AllowMissing: true,
+	})
+	if err != nil {
+		t.Fatalf("UpdateTrigger(allow_missing): %v", err)
+	}
+	if !op.Done {
+		t.Errorf("expected Done=true")
+	}
+
+	// The trigger should now exist.
+	_, err = srv.GetTrigger(ctx, &eventarcpb.GetTriggerRequest{Name: triggerName})
+	if err != nil {
+		t.Fatalf("GetTrigger after allow_missing update: %v", err)
+	}
+}
+
+// TestDeleteMessageBus_EtagMismatch verifies that DeleteMessageBus returns
+// Aborted when the etag does not match.
+func TestDeleteMessageBus_EtagMismatch(t *testing.T) {
+	ctx := context.Background()
+	srv := newTestServer(t)
+
+	parent := "projects/p/locations/l"
+	busName := parent + "/messageBuses/etag-bus"
+	_, err := srv.CreateMessageBus(ctx, &eventarcpb.CreateMessageBusRequest{
+		Parent:       parent,
+		MessageBusId: "etag-bus",
+		MessageBus:   &eventarcpb.MessageBus{},
+	})
+	if err != nil {
+		t.Fatalf("CreateMessageBus: %v", err)
+	}
+
+	_, err = srv.DeleteMessageBus(ctx, &eventarcpb.DeleteMessageBusRequest{
+		Name: busName,
+		Etag: "wrong-etag",
+	})
+	if err == nil {
+		t.Fatal("expected Aborted for etag mismatch, got nil")
+	}
+	st, _ := status.FromError(err)
+	if st.Code() != codes.Aborted {
+		t.Errorf("expected Aborted, got %s", st.Code())
+	}
+}
+
+// TestDeleteMessageBus_AllowMissing verifies that DeleteMessageBus with
+// allow_missing=true on a non-existent bus returns success.
+func TestDeleteMessageBus_AllowMissing(t *testing.T) {
+	ctx := context.Background()
+	srv := newTestServer(t)
+
+	op, err := srv.DeleteMessageBus(ctx, &eventarcpb.DeleteMessageBusRequest{
+		Name:         "projects/p/locations/l/messageBuses/does-not-exist",
+		AllowMissing: true,
+	})
+	if err != nil {
+		t.Fatalf("DeleteMessageBus(allow_missing): %v", err)
+	}
+	if !op.Done {
+		t.Errorf("expected Done=true")
+	}
+}
+
+// TestUpdateMessageBus_AllowMissing verifies that UpdateMessageBus with
+// allow_missing=true on a non-existent bus creates it.
+func TestUpdateMessageBus_AllowMissing(t *testing.T) {
+	ctx := context.Background()
+	srv := newTestServer(t)
+
+	parent := "projects/p/locations/l"
+	busName := parent + "/messageBuses/new-via-update"
+
+	op, err := srv.UpdateMessageBus(ctx, &eventarcpb.UpdateMessageBusRequest{
+		MessageBus:   &eventarcpb.MessageBus{Name: busName},
+		AllowMissing: true,
+	})
+	if err != nil {
+		t.Fatalf("UpdateMessageBus(allow_missing): %v", err)
+	}
+	if !op.Done {
+		t.Errorf("expected Done=true")
+	}
+
+	// The bus should now exist.
+	_, err = srv.GetMessageBus(ctx, &eventarcpb.GetMessageBusRequest{Name: busName})
+	if err != nil {
+		t.Fatalf("GetMessageBus after allow_missing update: %v", err)
+	}
+}
+
+// TestCreateEnrollment_MissingCelMatch verifies that CreateEnrollment returns
+// InvalidArgument when enrollment.cel_match is empty.
+func TestCreateEnrollment_MissingCelMatch(t *testing.T) {
+	ctx := context.Background()
+	srv := newTestServer(t)
+
+	_, err := srv.CreateEnrollment(ctx, &eventarcpb.CreateEnrollmentRequest{
+		Parent:       "projects/p/locations/l",
+		EnrollmentId: "bad-enrollment",
+		Enrollment:   &eventarcpb.Enrollment{},
+	})
+	if err == nil {
+		t.Fatal("expected InvalidArgument, got nil")
+	}
+	st, _ := status.FromError(err)
+	if st.Code() != codes.InvalidArgument {
+		t.Errorf("expected InvalidArgument, got %s", st.Code())
+	}
+}
+
+// TestCreatePipeline_MissingDestinations verifies that CreatePipeline returns
+// InvalidArgument when pipeline.destinations is empty.
+func TestCreatePipeline_MissingDestinations(t *testing.T) {
+	ctx := context.Background()
+	srv := newTestServer(t)
+
+	_, err := srv.CreatePipeline(ctx, &eventarcpb.CreatePipelineRequest{
+		Parent:     "projects/p/locations/l",
+		PipelineId: "bad-pipeline",
+		Pipeline:   &eventarcpb.Pipeline{},
+	})
+	if err == nil {
+		t.Fatal("expected InvalidArgument, got nil")
+	}
+	st, _ := status.FromError(err)
+	if st.Code() != codes.InvalidArgument {
+		t.Errorf("expected InvalidArgument, got %s", st.Code())
+	}
+}
+
+// TestCreateGoogleApiSource_MissingDestination verifies that
+// CreateGoogleApiSource returns InvalidArgument when destination is empty.
+func TestCreateGoogleApiSource_MissingDestination(t *testing.T) {
+	ctx := context.Background()
+	srv := newTestServer(t)
+
+	_, err := srv.CreateGoogleApiSource(ctx, &eventarcpb.CreateGoogleApiSourceRequest{
+		Parent:            "projects/p/locations/l",
+		GoogleApiSourceId: "bad-source",
+		GoogleApiSource:   &eventarcpb.GoogleApiSource{},
+	})
+	if err == nil {
+		t.Fatal("expected InvalidArgument, got nil")
+	}
+	st, _ := status.FromError(err)
+	if st.Code() != codes.InvalidArgument {
+		t.Errorf("expected InvalidArgument, got %s", st.Code())
 	}
 }

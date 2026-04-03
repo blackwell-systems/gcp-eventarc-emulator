@@ -533,7 +533,15 @@ func TestIntegration_PipelineCRUD(t *testing.T) {
 		op, err := eventarcClient.CreatePipeline(ctx, &eventarcpb.CreatePipelineRequest{
 			Parent:     parent,
 			PipelineId: pipelineID,
-			Pipeline:   &eventarcpb.Pipeline{},
+			Pipeline: &eventarcpb.Pipeline{
+				Destinations: []*eventarcpb.Pipeline_Destination{
+					{
+						DestinationDescriptor: &eventarcpb.Pipeline_Destination_HttpEndpoint_{
+							HttpEndpoint: &eventarcpb.Pipeline_Destination_HttpEndpoint{Uri: "http://localhost:8080/events"},
+						},
+					},
+				},
+			},
 		})
 		if err != nil {
 			t.Fatalf("CreatePipeline() error: %v", err)
