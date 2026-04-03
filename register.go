@@ -11,7 +11,6 @@ import (
 	publishingpb "cloud.google.com/go/eventarc/publishing/apiv1/publishingpb"
 	longrunningpb "cloud.google.com/go/longrunning/autogen/longrunningpb"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/reflection"
 
 	"github.com/blackwell-systems/gcp-eventarc-emulator/internal/dispatcher"
 	"github.com/blackwell-systems/gcp-eventarc-emulator/internal/logger"
@@ -59,6 +58,5 @@ func Register(grpcSrv *grpc.Server, opts ...Option) error {
 	eventarcpb.RegisterEventarcServer(grpcSrv, srv)
 	longrunningpb.RegisterOperationsServer(grpcSrv, srv.LROStore())
 	publishingpb.RegisterPublisherServer(grpcSrv, pub)
-	reflection.Register(grpcSrv)
 	return nil
 }
