@@ -4,15 +4,12 @@ package server
 import (
 	"context"
 	"fmt"
-	"math/rand"
 	"sort"
-	"strconv"
 	"strings"
 
 	eventarcpb "cloud.google.com/go/eventarc/apiv1/eventarcpb"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
-	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/fieldmaskpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
@@ -34,10 +31,10 @@ func (s *Storage) CreateMessageBus(ctx context.Context, parent, busID string, mb
 	}
 
 	now := timestamppb.Now()
-	uid := fmt.Sprintf("%x", rand.Uint64())
-	etag := fmt.Sprintf("%x", rand.Uint64())
+	uid := newUID()
+	etag := newEtag()
 
-	stored := cloneMessageBus(mb)
+	stored := cloneProto(mb)
 	stored.Name = name
 	stored.Uid = uid
 	stored.Etag = etag
@@ -45,7 +42,7 @@ func (s *Storage) CreateMessageBus(ctx context.Context, parent, busID string, mb
 	stored.UpdateTime = now
 
 	s.messageBuses[name] = stored
-	return cloneMessageBus(stored), nil
+	return cloneProto(stored), nil
 }
 
 // GetMessageBus returns the message bus with the given full resource name.
@@ -58,7 +55,7 @@ func (s *Storage) GetMessageBus(ctx context.Context, name string) (*eventarcpb.M
 	if !exists {
 		return nil, status.Errorf(codes.NotFound, "MessageBus [%s] not found", name)
 	}
-	return cloneMessageBus(stored), nil
+	return cloneProto(stored), nil
 }
 
 // UpdateMessageBus applies the fields specified in updateMask to the stored
@@ -99,8 +96,8 @@ func (s *Storage) UpdateMessageBus(ctx context.Context, mb *eventarcpb.MessageBu
 	}
 
 	stored.UpdateTime = timestamppb.Now()
-	stored.Etag = fmt.Sprintf("%x", rand.Uint64())
-	return cloneMessageBus(stored), nil
+	stored.Etag = newEtag()
+	return cloneProto(stored), nil
 }
 
 // DeleteMessageBus removes the message bus with the given full resource name.
@@ -126,7 +123,7 @@ func (s *Storage) ListMessageBuses(ctx context.Context, parent string, pageSize 
 	var all []*eventarcpb.MessageBus
 	for name, mb := range s.messageBuses {
 		if strings.HasPrefix(name, prefix) {
-			all = append(all, cloneMessageBus(mb))
+			all = append(all, cloneProto(mb))
 		}
 	}
 
@@ -134,31 +131,11 @@ func (s *Storage) ListMessageBuses(ctx context.Context, parent string, pageSize 
 		return all[i].GetName() < all[j].GetName()
 	})
 
-	startIdx := 0
-	if pageToken != "" {
-		if n, err := strconv.Atoi(pageToken); err == nil {
-			startIdx = n
-		}
+	page, nextToken, err := PaginatePage(all, pageToken, pageSize)
+	if err != nil {
+		return nil, "", err
 	}
-	if pageSize <= 0 {
-		pageSize = 100
-	}
-
-	endIdx := startIdx + int(pageSize)
-	if endIdx > len(all) {
-		endIdx = len(all)
-	}
-
-	var results []*eventarcpb.MessageBus
-	if startIdx < len(all) {
-		results = all[startIdx:endIdx]
-	}
-
-	nextToken := ""
-	if endIdx < len(all) {
-		nextToken = strconv.Itoa(endIdx)
-	}
-	return results, nextToken, nil
+	return page, nextToken, nil
 }
 
 // ListMessageBusEnrollments returns the resource names ([]string) of
@@ -177,31 +154,11 @@ func (s *Storage) ListMessageBusEnrollments(ctx context.Context, busName string,
 
 	sort.Strings(all)
 
-	startIdx := 0
-	if pageToken != "" {
-		if n, err := strconv.Atoi(pageToken); err == nil {
-			startIdx = n
-		}
+	page, nextToken, err := PaginatePage[string](all, pageToken, pageSize)
+	if err != nil {
+		return nil, "", err
 	}
-	if pageSize <= 0 {
-		pageSize = 100
-	}
-
-	endIdx := startIdx + int(pageSize)
-	if endIdx > len(all) {
-		endIdx = len(all)
-	}
-
-	var results []string
-	if startIdx < len(all) {
-		results = all[startIdx:endIdx]
-	}
-
-	nextToken := ""
-	if endIdx < len(all) {
-		nextToken = strconv.Itoa(endIdx)
-	}
-	return results, nextToken, nil
+	return page, nextToken, nil
 }
 
 // -------------------------------------------------------------------------
@@ -221,10 +178,10 @@ func (s *Storage) CreateEnrollment(ctx context.Context, parent, enrollmentID str
 	}
 
 	now := timestamppb.Now()
-	uid := fmt.Sprintf("%x", rand.Uint64())
-	etag := fmt.Sprintf("%x", rand.Uint64())
+	uid := newUID()
+	etag := newEtag()
 
-	stored := cloneEnrollment(en)
+	stored := cloneProto(en)
 	stored.Name = name
 	stored.Uid = uid
 	stored.Etag = etag
@@ -232,7 +189,7 @@ func (s *Storage) CreateEnrollment(ctx context.Context, parent, enrollmentID str
 	stored.UpdateTime = now
 
 	s.enrollments[name] = stored
-	return cloneEnrollment(stored), nil
+	return cloneProto(stored), nil
 }
 
 // GetEnrollment returns the enrollment with the given full resource name.
@@ -245,7 +202,7 @@ func (s *Storage) GetEnrollment(ctx context.Context, name string) (*eventarcpb.E
 	if !exists {
 		return nil, status.Errorf(codes.NotFound, "Enrollment [%s] not found", name)
 	}
-	return cloneEnrollment(stored), nil
+	return cloneProto(stored), nil
 }
 
 // UpdateEnrollment applies the fields specified in updateMask to the stored
@@ -289,8 +246,8 @@ func (s *Storage) UpdateEnrollment(ctx context.Context, en *eventarcpb.Enrollmen
 	}
 
 	stored.UpdateTime = timestamppb.Now()
-	stored.Etag = fmt.Sprintf("%x", rand.Uint64())
-	return cloneEnrollment(stored), nil
+	stored.Etag = newEtag()
+	return cloneProto(stored), nil
 }
 
 // DeleteEnrollment removes the enrollment with the given full resource name.
@@ -316,7 +273,7 @@ func (s *Storage) ListEnrollments(ctx context.Context, parent string, pageSize i
 	var all []*eventarcpb.Enrollment
 	for name, en := range s.enrollments {
 		if strings.HasPrefix(name, prefix) {
-			all = append(all, cloneEnrollment(en))
+			all = append(all, cloneProto(en))
 		}
 	}
 
@@ -324,49 +281,9 @@ func (s *Storage) ListEnrollments(ctx context.Context, parent string, pageSize i
 		return all[i].GetName() < all[j].GetName()
 	})
 
-	startIdx := 0
-	if pageToken != "" {
-		if n, err := strconv.Atoi(pageToken); err == nil {
-			startIdx = n
-		}
+	page, nextToken, err := PaginatePage(all, pageToken, pageSize)
+	if err != nil {
+		return nil, "", err
 	}
-	if pageSize <= 0 {
-		pageSize = 100
-	}
-
-	endIdx := startIdx + int(pageSize)
-	if endIdx > len(all) {
-		endIdx = len(all)
-	}
-
-	var results []*eventarcpb.Enrollment
-	if startIdx < len(all) {
-		results = all[startIdx:endIdx]
-	}
-
-	nextToken := ""
-	if endIdx < len(all) {
-		nextToken = strconv.Itoa(endIdx)
-	}
-	return results, nextToken, nil
-}
-
-// -------------------------------------------------------------------------
-// Clone helpers
-// -------------------------------------------------------------------------
-
-// cloneMessageBus returns a deep copy of the message bus proto.
-func cloneMessageBus(mb *eventarcpb.MessageBus) *eventarcpb.MessageBus {
-	if mb == nil {
-		return nil
-	}
-	return proto.Clone(mb).(*eventarcpb.MessageBus)
-}
-
-// cloneEnrollment returns a deep copy of the enrollment proto.
-func cloneEnrollment(en *eventarcpb.Enrollment) *eventarcpb.Enrollment {
-	if en == nil {
-		return nil
-	}
-	return proto.Clone(en).(*eventarcpb.Enrollment)
+	return page, nextToken, nil
 }

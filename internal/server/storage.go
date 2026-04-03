@@ -4,9 +4,7 @@ package server
 import (
 	"context"
 	"fmt"
-	"math/rand"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 
@@ -137,16 +135,16 @@ func (s *Storage) CreateTrigger(ctx context.Context, parent, triggerID string, t
 	}
 
 	now := timestamppb.Now()
-	uid := fmt.Sprintf("%x", rand.Uint64())
+	uid := newUID()
 
-	stored := cloneTrigger(trigger)
+	stored := cloneProto(trigger)
 	stored.Name = name
 	stored.Uid = uid
 	stored.CreateTime = now
 	stored.UpdateTime = now
 
 	s.triggers[name] = stored
-	return cloneTrigger(stored), nil
+	return cloneProto(stored), nil
 }
 
 // GetTrigger returns the trigger with the given full resource name.
@@ -159,7 +157,7 @@ func (s *Storage) GetTrigger(ctx context.Context, name string) (*eventarcpb.Trig
 	if !exists {
 		return nil, status.Errorf(codes.NotFound, "Trigger [%s] not found", name)
 	}
-	return cloneTrigger(stored), nil
+	return cloneProto(stored), nil
 }
 
 // UpdateTrigger applies the fields specified in updateMask to the stored
@@ -200,7 +198,7 @@ func (s *Storage) UpdateTrigger(ctx context.Context, trigger *eventarcpb.Trigger
 	}
 
 	stored.UpdateTime = timestamppb.Now()
-	return cloneTrigger(stored), nil
+	return cloneProto(stored), nil
 }
 
 // DeleteTrigger removes the trigger with the given full resource name.
@@ -230,7 +228,7 @@ func (s *Storage) ListTriggers(ctx context.Context, parent string, pageSize int3
 	var all []*eventarcpb.Trigger
 	for name, t := range s.triggers {
 		if strings.HasPrefix(name, prefix) {
-			all = append(all, cloneTrigger(t))
+			all = append(all, cloneProto(t))
 		}
 	}
 
@@ -254,31 +252,11 @@ func (s *Storage) ListTriggers(ctx context.Context, parent string, pageSize int3
 	}
 
 	// Paginate.
-	startIdx := 0
-	if pageToken != "" {
-		if n, err := strconv.Atoi(pageToken); err == nil {
-			startIdx = n
-		}
+	page, nextToken, err := PaginatePage(all, pageToken, pageSize)
+	if err != nil {
+		return nil, "", err
 	}
-	if pageSize <= 0 {
-		pageSize = 100
-	}
-
-	endIdx := startIdx + int(pageSize)
-	if endIdx > len(all) {
-		endIdx = len(all)
-	}
-
-	var results []*eventarcpb.Trigger
-	if startIdx < len(all) {
-		results = all[startIdx:endIdx]
-	}
-
-	nextToken := ""
-	if endIdx < len(all) {
-		nextToken = strconv.Itoa(endIdx)
-	}
-	return results, nextToken, nil
+	return page, nextToken, nil
 }
 
 // ListAllTriggers returns all triggers under the given parent without pagination.
@@ -291,7 +269,7 @@ func (s *Storage) ListAllTriggers(ctx context.Context, parent string) ([]*eventa
 	var all []*eventarcpb.Trigger
 	for name, t := range s.triggers {
 		if strings.HasPrefix(name, prefix) {
-			all = append(all, cloneTrigger(t))
+			all = append(all, cloneProto(t))
 		}
 	}
 	return all, nil
@@ -349,31 +327,11 @@ func (s *Storage) ListProviders(ctx context.Context, parent string, pageSize int
 	})
 
 	// Paginate.
-	startIdx := 0
-	if pageToken != "" {
-		if n, err := strconv.Atoi(pageToken); err == nil {
-			startIdx = n
-		}
+	page, nextToken, err := PaginatePage(all, pageToken, pageSize)
+	if err != nil {
+		return nil, "", err
 	}
-	if pageSize <= 0 {
-		pageSize = 100
-	}
-
-	endIdx := startIdx + int(pageSize)
-	if endIdx > len(all) {
-		endIdx = len(all)
-	}
-
-	var results []*eventarcpb.Provider
-	if startIdx < len(all) {
-		results = all[startIdx:endIdx]
-	}
-
-	nextToken := ""
-	if endIdx < len(all) {
-		nextToken = strconv.Itoa(endIdx)
-	}
-	return results, nextToken, nil
+	return page, nextToken, nil
 }
 
 // -------------------------------------------------------------------------
@@ -397,14 +355,6 @@ func (s *Storage) TriggerCount() int {
 // -------------------------------------------------------------------------
 // Internal helpers
 // -------------------------------------------------------------------------
-
-// cloneTrigger returns a deep copy of the trigger proto using proto.Clone.
-func cloneTrigger(t *eventarcpb.Trigger) *eventarcpb.Trigger {
-	if t == nil {
-		return nil
-	}
-	return proto.Clone(t).(*eventarcpb.Trigger)
-}
 
 // cloneProvider returns a deep copy of p with Name overwritten to realName.
 func cloneProvider(p *eventarcpb.Provider, realName string) *eventarcpb.Provider {

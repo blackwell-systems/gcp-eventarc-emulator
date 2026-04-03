@@ -5,15 +5,12 @@ package server
 import (
 	"context"
 	"fmt"
-	"math/rand"
 	"sort"
-	"strconv"
 	"strings"
 
 	eventarcpb "cloud.google.com/go/eventarc/apiv1/eventarcpb"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
-	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/fieldmaskpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
@@ -34,9 +31,9 @@ func (s *Storage) CreateChannel(ctx context.Context, parent, channelID string, c
 	}
 
 	now := timestamppb.Now()
-	uid := fmt.Sprintf("%x", rand.Uint64())
+	uid := newUID()
 
-	stored := cloneChannel(ch)
+	stored := cloneProto(ch)
 	stored.Name = name
 	stored.Uid = uid
 	stored.CreateTime = now
@@ -44,7 +41,7 @@ func (s *Storage) CreateChannel(ctx context.Context, parent, channelID string, c
 	stored.State = eventarcpb.Channel_ACTIVE
 
 	s.channels[name] = stored
-	return cloneChannel(stored), nil
+	return cloneProto(stored), nil
 }
 
 // GetChannel returns the channel with the given full resource name.
@@ -57,7 +54,7 @@ func (s *Storage) GetChannel(ctx context.Context, name string) (*eventarcpb.Chan
 	if !exists {
 		return nil, status.Errorf(codes.NotFound, "Channel [%s] not found", name)
 	}
-	return cloneChannel(stored), nil
+	return cloneProto(stored), nil
 }
 
 // GetChannelExists reports whether a channel with the given full resource
@@ -100,7 +97,7 @@ func (s *Storage) UpdateChannel(ctx context.Context, ch *eventarcpb.Channel, mas
 	}
 
 	stored.UpdateTime = timestamppb.Now()
-	return cloneChannel(stored), nil
+	return cloneProto(stored), nil
 }
 
 // DeleteChannel removes the channel with the given full resource name.
@@ -125,7 +122,7 @@ func (s *Storage) ListChannels(ctx context.Context, parent string, pageSize int3
 	var all []*eventarcpb.Channel
 	for name, ch := range s.channels {
 		if strings.HasPrefix(name, prefix) {
-			all = append(all, cloneChannel(ch))
+			all = append(all, cloneProto(ch))
 		}
 	}
 
@@ -133,31 +130,11 @@ func (s *Storage) ListChannels(ctx context.Context, parent string, pageSize int3
 		return all[i].GetName() < all[j].GetName()
 	})
 
-	startIdx := 0
-	if pageToken != "" {
-		if n, err := strconv.Atoi(pageToken); err == nil {
-			startIdx = n
-		}
+	page, nextToken, err := PaginatePage(all, pageToken, pageSize)
+	if err != nil {
+		return nil, "", err
 	}
-	if pageSize <= 0 {
-		pageSize = 100
-	}
-
-	endIdx := startIdx + int(pageSize)
-	if endIdx > len(all) {
-		endIdx = len(all)
-	}
-
-	var results []*eventarcpb.Channel
-	if startIdx < len(all) {
-		results = all[startIdx:endIdx]
-	}
-
-	nextToken := ""
-	if endIdx < len(all) {
-		nextToken = strconv.Itoa(endIdx)
-	}
-	return results, nextToken, nil
+	return page, nextToken, nil
 }
 
 // -------------------------------------------------------------------------
@@ -177,16 +154,16 @@ func (s *Storage) CreateChannelConnection(ctx context.Context, parent, connID st
 	}
 
 	now := timestamppb.Now()
-	uid := fmt.Sprintf("%x", rand.Uint64())
+	uid := newUID()
 
-	stored := cloneChannelConnection(conn)
+	stored := cloneProto(conn)
 	stored.Name = name
 	stored.Uid = uid
 	stored.CreateTime = now
 	stored.UpdateTime = now
 
 	s.channelConnections[name] = stored
-	return cloneChannelConnection(stored), nil
+	return cloneProto(stored), nil
 }
 
 // GetChannelConnection returns the channel connection with the given full
@@ -199,7 +176,7 @@ func (s *Storage) GetChannelConnection(ctx context.Context, name string) (*event
 	if !exists {
 		return nil, status.Errorf(codes.NotFound, "ChannelConnection [%s] not found", name)
 	}
-	return cloneChannelConnection(stored), nil
+	return cloneProto(stored), nil
 }
 
 // DeleteChannelConnection removes the channel connection with the given full
@@ -225,7 +202,7 @@ func (s *Storage) ListChannelConnections(ctx context.Context, parent string, pag
 	var all []*eventarcpb.ChannelConnection
 	for name, cc := range s.channelConnections {
 		if strings.HasPrefix(name, prefix) {
-			all = append(all, cloneChannelConnection(cc))
+			all = append(all, cloneProto(cc))
 		}
 	}
 
@@ -233,31 +210,11 @@ func (s *Storage) ListChannelConnections(ctx context.Context, parent string, pag
 		return all[i].GetName() < all[j].GetName()
 	})
 
-	startIdx := 0
-	if pageToken != "" {
-		if n, err := strconv.Atoi(pageToken); err == nil {
-			startIdx = n
-		}
+	page, nextToken, err := PaginatePage(all, pageToken, pageSize)
+	if err != nil {
+		return nil, "", err
 	}
-	if pageSize <= 0 {
-		pageSize = 100
-	}
-
-	endIdx := startIdx + int(pageSize)
-	if endIdx > len(all) {
-		endIdx = len(all)
-	}
-
-	var results []*eventarcpb.ChannelConnection
-	if startIdx < len(all) {
-		results = all[startIdx:endIdx]
-	}
-
-	nextToken := ""
-	if endIdx < len(all) {
-		nextToken = strconv.Itoa(endIdx)
-	}
-	return results, nextToken, nil
+	return page, nextToken, nil
 }
 
 // -------------------------------------------------------------------------
@@ -271,7 +228,7 @@ func (s *Storage) GetGoogleChannelConfig(ctx context.Context, name string) (*eve
 	defer s.mu.RUnlock()
 
 	if stored, exists := s.googleChannelConfigs[name]; exists {
-		return cloneGoogleChannelConfig(stored), nil
+		return cloneProto(stored), nil
 	}
 	return &eventarcpb.GoogleChannelConfig{
 		Name:       name,
@@ -308,33 +265,6 @@ func (s *Storage) UpdateGoogleChannelConfig(ctx context.Context, cfg *eventarcpb
 
 	stored.UpdateTime = timestamppb.Now()
 	s.googleChannelConfigs[name] = stored
-	return cloneGoogleChannelConfig(stored), nil
+	return cloneProto(stored), nil
 }
 
-// -------------------------------------------------------------------------
-// Clone helpers
-// -------------------------------------------------------------------------
-
-// cloneChannel returns a deep copy of the channel proto using proto.Clone.
-func cloneChannel(c *eventarcpb.Channel) *eventarcpb.Channel {
-	if c == nil {
-		return nil
-	}
-	return proto.Clone(c).(*eventarcpb.Channel)
-}
-
-// cloneChannelConnection returns a deep copy of the channel connection proto.
-func cloneChannelConnection(cc *eventarcpb.ChannelConnection) *eventarcpb.ChannelConnection {
-	if cc == nil {
-		return nil
-	}
-	return proto.Clone(cc).(*eventarcpb.ChannelConnection)
-}
-
-// cloneGoogleChannelConfig returns a deep copy of the GoogleChannelConfig proto.
-func cloneGoogleChannelConfig(cfg *eventarcpb.GoogleChannelConfig) *eventarcpb.GoogleChannelConfig {
-	if cfg == nil {
-		return nil
-	}
-	return proto.Clone(cfg).(*eventarcpb.GoogleChannelConfig)
-}
