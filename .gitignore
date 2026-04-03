@@ -11,3 +11,4 @@ gcp-eventarc-emulator
 
 # buf lock file (regenerated on each buf generate)
 buf.lock
+examples/sdk-demo/sdk-demo

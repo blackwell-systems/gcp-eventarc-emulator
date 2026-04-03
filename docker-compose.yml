@@ -1,0 +1,11 @@
+services:
+  emulator:
+    build: .
+    ports:
+      - "9085:9085"
+      - "8085:8085"
+
+  webhook:
+    build: examples/webhook-receiver
+    ports:
+      - "3000:3000"

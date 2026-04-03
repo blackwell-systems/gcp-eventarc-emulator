@@ -22,7 +22,6 @@ import (
 	"github.com/blackwell-systems/gcp-eventarc-emulator/internal/lro"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
-	"google.golang.org/protobuf/types/known/emptypb"
 )
 
 // Server implements the EventarcServer interface.
@@ -233,11 +232,15 @@ func (s *Server) DeleteTrigger(ctx context.Context, req *eventarcpb.DeleteTrigge
 		return nil, err
 	}
 
+	trigger, err := s.storage.GetTrigger(ctx, req.GetName())
+	if err != nil {
+		return nil, err
+	}
 	if err := s.storage.DeleteTrigger(ctx, req.GetName()); err != nil {
 		return nil, err
 	}
 
-	return s.lro.CreateDone(parent, &emptypb.Empty{})
+	return s.lro.CreateDone(parent, trigger)
 }
 
 // -------------------------------------------------------------------------
@@ -364,10 +367,14 @@ func (s *Server) DeleteChannel(ctx context.Context, req *eventarcpb.DeleteChanne
 	if err := s.checkPermission(ctx, "eventarc.channels.delete", req.GetName()); err != nil {
 		return nil, err
 	}
+	channel, err := s.storage.GetChannel(ctx, req.GetName())
+	if err != nil {
+		return nil, err
+	}
 	if err := s.storage.DeleteChannel(ctx, req.GetName()); err != nil {
 		return nil, err
 	}
-	return s.lro.CreateDone(parent, &emptypb.Empty{})
+	return s.lro.CreateDone(parent, channel)
 }
 
 // -------------------------------------------------------------------------
@@ -433,10 +440,14 @@ func (s *Server) DeleteChannelConnection(ctx context.Context, req *eventarcpb.De
 	if err := s.checkPermission(ctx, "eventarc.channelConnections.delete", req.GetName()); err != nil {
 		return nil, err
 	}
+	conn, err := s.storage.GetChannelConnection(ctx, req.GetName())
+	if err != nil {
+		return nil, err
+	}
 	if err := s.storage.DeleteChannelConnection(ctx, req.GetName()); err != nil {
 		return nil, err
 	}
-	return s.lro.CreateDone(parent, &emptypb.Empty{})
+	return s.lro.CreateDone(parent, conn)
 }
 
 // -------------------------------------------------------------------------
@@ -562,10 +573,14 @@ func (s *Server) DeleteMessageBus(ctx context.Context, req *eventarcpb.DeleteMes
 	if err := s.checkPermission(ctx, "eventarc.messageBuses.delete", req.GetName()); err != nil {
 		return nil, err
 	}
+	bus, err := s.storage.GetMessageBus(ctx, req.GetName())
+	if err != nil {
+		return nil, err
+	}
 	if err := s.storage.DeleteMessageBus(ctx, req.GetName()); err != nil {
 		return nil, err
 	}
-	return s.lro.CreateDone(parent, &emptypb.Empty{})
+	return s.lro.CreateDone(parent, bus)
 }
 
 // -------------------------------------------------------------------------
@@ -647,10 +662,14 @@ func (s *Server) DeleteEnrollment(ctx context.Context, req *eventarcpb.DeleteEnr
 	if err := s.checkPermission(ctx, "eventarc.enrollments.delete", req.GetName()); err != nil {
 		return nil, err
 	}
+	enrollment, err := s.storage.GetEnrollment(ctx, req.GetName())
+	if err != nil {
+		return nil, err
+	}
 	if err := s.storage.DeleteEnrollment(ctx, req.GetName()); err != nil {
 		return nil, err
 	}
-	return s.lro.CreateDone(parent, &emptypb.Empty{})
+	return s.lro.CreateDone(parent, enrollment)
 }
 
 // -------------------------------------------------------------------------
@@ -732,10 +751,14 @@ func (s *Server) DeletePipeline(ctx context.Context, req *eventarcpb.DeletePipel
 	if err := s.checkPermission(ctx, "eventarc.pipelines.delete", req.GetName()); err != nil {
 		return nil, err
 	}
+	pipeline, err := s.storage.GetPipeline(ctx, req.GetName())
+	if err != nil {
+		return nil, err
+	}
 	if err := s.storage.DeletePipeline(ctx, req.GetName()); err != nil {
 		return nil, err
 	}
-	return s.lro.CreateDone(parent, &emptypb.Empty{})
+	return s.lro.CreateDone(parent, pipeline)
 }
 
 // -------------------------------------------------------------------------
@@ -817,8 +840,12 @@ func (s *Server) DeleteGoogleApiSource(ctx context.Context, req *eventarcpb.Dele
 	if err := s.checkPermission(ctx, "eventarc.googleApiSources.delete", req.GetName()); err != nil {
 		return nil, err
 	}
+	src, err := s.storage.GetGoogleApiSource(ctx, req.GetName())
+	if err != nil {
+		return nil, err
+	}
 	if err := s.storage.DeleteGoogleApiSource(ctx, req.GetName()); err != nil {
 		return nil, err
 	}
-	return s.lro.CreateDone(parent, &emptypb.Empty{})
+	return s.lro.CreateDone(parent, src)
 }

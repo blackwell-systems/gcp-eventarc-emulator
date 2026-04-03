@@ -153,6 +153,13 @@ curl "http://localhost:8085/v1/projects/my-project/locations/us-central1/provide
 
 ### Install
 
+**Docker (recommended):**
+```bash
+docker build -t gcp-eventarc-emulator .
+docker run -p 9085:9085 -p 8085:8085 gcp-eventarc-emulator
+```
+
+**Go install:**
 ```bash
 # gRPC only
 go install github.com/blackwell-systems/gcp-eventarc-emulator/cmd/server@latest
@@ -361,6 +368,28 @@ The REST API is powered by [grpc-gateway v2](https://github.com/grpc-ecosystem/g
 - REST paths match the real GCP Eventarc REST API exactly
 - Request/response JSON matches GCP's format
 - Both the Eventarc service and Publisher service are exposed
+
+---
+
+## Demo
+
+Run the full loop — trigger creation, event publishing, and binary content mode delivery — using Docker:
+
+```bash
+# Start the emulator and a webhook receiver
+docker compose up -d
+
+# Run the demo script
+./examples/demo.sh
+
+# See the delivered CloudEvent (binary content mode, Ce-* headers)
+docker compose logs webhook
+
+# Tear down
+docker compose down
+```
+
+The demo creates triggers, channels, message buses, pipelines, and enrollments, then publishes a CloudEvent and shows it arriving at the webhook receiver with `Ce-*` headers.
 
 ---
 
