@@ -51,6 +51,22 @@ func New(grpcAddr string) (*Gateway, error) {
 		return nil, err
 	}
 
+	// Register machine-readable health endpoints so CI scripts and orchestration
+	// tools can probe readiness without grepping stdout for log lines.
+	healthHandler := func(w http.ResponseWriter, r *http.Request, _ map[string]string) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"status":"ok"}`))
+	}
+	if err := mux.HandlePath("GET", "/healthz", healthHandler); err != nil {
+		conn.Close()
+		return nil, err
+	}
+	if err := mux.HandlePath("GET", "/readyz", healthHandler); err != nil {
+		conn.Close()
+		return nil, err
+	}
+
 	return &Gateway{mux: mux, conn: conn, opsClient: opsClient}, nil
 }
 
