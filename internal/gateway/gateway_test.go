@@ -151,6 +151,60 @@ func TestProjectScopedLRORewriter_NonLROPath(t *testing.T) {
 	}
 }
 
+// TestHealthz verifies that GET /healthz returns HTTP 200 with {"status":"ok"}.
+func TestHealthz(t *testing.T) {
+	g, err := New("localhost:9999")
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer g.conn.Close() //nolint:errcheck
+
+	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	w := httptest.NewRecorder()
+	g.mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if ct := w.Header().Get("Content-Type"); ct != "application/json" {
+		t.Errorf("Content-Type = %q, want application/json", ct)
+	}
+	var body map[string]string
+	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if body["status"] != "ok" {
+		t.Errorf(`body["status"] = %q, want "ok"`, body["status"])
+	}
+}
+
+// TestReadyz verifies that GET /readyz returns HTTP 200 with {"status":"ok"}.
+func TestReadyz(t *testing.T) {
+	g, err := New("localhost:9999")
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer g.conn.Close() //nolint:errcheck
+
+	req := httptest.NewRequest(http.MethodGet, "/readyz", nil)
+	w := httptest.NewRecorder()
+	g.mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if ct := w.Header().Get("Content-Type"); ct != "application/json" {
+		t.Errorf("Content-Type = %q, want application/json", ct)
+	}
+	var body map[string]string
+	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if body["status"] != "ok" {
+		t.Errorf(`body["status"] = %q, want "ok"`, body["status"])
+	}
+}
+
 // projectScopedLRORewriterFallback is a test-only variant of projectScopedLRORewriter
 // that accepts a custom fallback handler so tests can intercept forwarded requests.
 func projectScopedLRORewriterFallback(opsClient longrunninggw.OperationsClient, mux *runtime.ServeMux, fallback http.Handler) http.Handler {
