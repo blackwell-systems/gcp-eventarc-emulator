@@ -7,6 +7,7 @@ import (
 	eventarcpb "cloud.google.com/go/eventarc/apiv1/eventarcpb"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/fieldmaskpb"
 )
 
 const (
@@ -223,4 +224,81 @@ func TestProviderEventTypes_NotEmpty(t *testing.T) {
 // startsWith is a helper that avoids importing strings in the test file.
 func startsWith(s, prefix string) bool {
 	return len(s) >= len(prefix) && s[:len(prefix)] == prefix
+}
+
+// TestCreateTrigger_EtagSet verifies that CreateTrigger assigns a non-empty etag.
+func TestCreateTrigger_EtagSet(t *testing.T) {
+	s := newTestStorage(t)
+	ctx := context.Background()
+
+	got, err := s.CreateTrigger(ctx, testParent, "etag-trigger", &eventarcpb.Trigger{})
+	if err != nil {
+		t.Fatalf("CreateTrigger: unexpected error: %v", err)
+	}
+	if got.GetEtag() == "" {
+		t.Error("Etag should not be empty after create")
+	}
+}
+
+// TestUpdateTrigger_EtagRefreshed verifies that UpdateTrigger sets a new etag
+// that differs from the one assigned at creation.
+func TestUpdateTrigger_EtagRefreshed(t *testing.T) {
+	s := newTestStorage(t)
+	ctx := context.Background()
+
+	created, err := s.CreateTrigger(ctx, testParent, "etag-update-trigger", &eventarcpb.Trigger{
+		ServiceAccount: "sa@project.iam.gserviceaccount.com",
+	})
+	if err != nil {
+		t.Fatalf("CreateTrigger: unexpected error: %v", err)
+	}
+	etag1 := created.GetEtag()
+	if etag1 == "" {
+		t.Fatal("etag1 should not be empty after create")
+	}
+
+	updated, err := s.UpdateTrigger(ctx, &eventarcpb.Trigger{
+		Name:           created.GetName(),
+		ServiceAccount: "new-sa@project.iam.gserviceaccount.com",
+	}, nil)
+	if err != nil {
+		t.Fatalf("UpdateTrigger: unexpected error: %v", err)
+	}
+	etag2 := updated.GetEtag()
+	if etag2 == "" {
+		t.Error("etag2 should not be empty after update")
+	}
+	if etag1 == etag2 {
+		t.Errorf("etag should change after update: etag1=%q etag2=%q", etag1, etag2)
+	}
+}
+
+// TestUpdateTrigger_WildcardMask verifies that a "*" mask path updates all
+// mutable fields.
+func TestUpdateTrigger_WildcardMask(t *testing.T) {
+	s := newTestStorage(t)
+	ctx := context.Background()
+
+	created, err := s.CreateTrigger(ctx, testParent, "wildcard-trigger", &eventarcpb.Trigger{
+		ServiceAccount: "original@project.iam.gserviceaccount.com",
+	})
+	if err != nil {
+		t.Fatalf("CreateTrigger: unexpected error: %v", err)
+	}
+
+	mask := &fieldmaskpb.FieldMask{Paths: []string{"*"}}
+	updated, err := s.UpdateTrigger(ctx, &eventarcpb.Trigger{
+		Name:           created.GetName(),
+		ServiceAccount: "updated@project.iam.gserviceaccount.com",
+		Channel:        "projects/test/locations/us-central1/channels/my-chan",
+	}, mask)
+	if err != nil {
+		t.Fatalf("UpdateTrigger with wildcard mask: unexpected error: %v", err)
+	}
+	if updated.GetServiceAccount() != "updated@project.iam.gserviceaccount.com" {
+		t.Errorf("ServiceAccount = %q, want updated value", updated.GetServiceAccount())
+	}
+	if updated.GetChannel() != "projects/test/locations/us-central1/channels/my-chan" {
+		t.Errorf("Channel = %q, want updated value", updated.GetChannel())
+	}
 }

@@ -241,9 +241,12 @@ func TestStorageGetGoogleChannelConfig_Default(t *testing.T) {
 	}
 }
 
-// TestCreateChannel_StateIsActive verifies that a newly created channel has
-// its State field set to ACTIVE.
-func TestCreateChannel_StateIsActive(t *testing.T) {
+// TestCreateChannel_StateIsActive was updated: initial state is now PENDING.
+// See TestCreateChannel_InitialStatePending.
+
+// TestCreateChannel_InitialStatePending verifies that a newly created channel
+// has its State field set to PENDING (not ACTIVE).
+func TestCreateChannel_InitialStatePending(t *testing.T) {
 	s := newTestStorage(t)
 	ctx := context.Background()
 
@@ -252,8 +255,86 @@ func TestCreateChannel_StateIsActive(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateChannel: unexpected error: %v", err)
 	}
-	if got.GetState() != eventarcpb.Channel_ACTIVE {
-		t.Errorf("State = %v, want ACTIVE", got.GetState())
+	if got.GetState() != eventarcpb.Channel_PENDING {
+		t.Errorf("State = %v, want PENDING", got.GetState())
+	}
+}
+
+// TestCreateChannel_ActivationTokenSet verifies that a newly created channel
+// has a non-empty ActivationToken.
+func TestCreateChannel_ActivationTokenSet(t *testing.T) {
+	s := newTestStorage(t)
+	ctx := context.Background()
+
+	ch := &eventarcpb.Channel{}
+	got, err := s.CreateChannel(ctx, testParent, "token-test-channel", ch)
+	if err != nil {
+		t.Fatalf("CreateChannel: unexpected error: %v", err)
+	}
+	if got.GetActivationToken() == "" {
+		t.Error("ActivationToken should not be empty after create")
+	}
+}
+
+// TestCreateChannelConnection_ActivationTokenCleared verifies that an
+// activation_token supplied in the input is not persisted on the stored
+// ChannelConnection.
+func TestCreateChannelConnection_ActivationTokenCleared(t *testing.T) {
+	s := newTestStorage(t)
+	ctx := context.Background()
+
+	conn := &eventarcpb.ChannelConnection{
+		ActivationToken: "should-be-cleared",
+	}
+	got, err := s.CreateChannelConnection(ctx, testParent, "token-conn", conn)
+	if err != nil {
+		t.Fatalf("CreateChannelConnection: unexpected error: %v", err)
+	}
+	if got.GetActivationToken() != "" {
+		t.Errorf("ActivationToken = %q, want empty string", got.GetActivationToken())
+	}
+}
+
+// TestGetGoogleChannelConfig_StableUpdateTime verifies that calling
+// GetGoogleChannelConfig twice for the same name returns the same UpdateTime
+// (i.e. the default is initialized once, not regenerated on each call).
+func TestGetGoogleChannelConfig_StableUpdateTime(t *testing.T) {
+	s := newTestStorage(t)
+	ctx := context.Background()
+
+	name := testParent + "/googleChannelConfig"
+	first, err := s.GetGoogleChannelConfig(ctx, name)
+	if err != nil {
+		t.Fatalf("GetGoogleChannelConfig (1st): %v", err)
+	}
+	second, err := s.GetGoogleChannelConfig(ctx, name)
+	if err != nil {
+		t.Fatalf("GetGoogleChannelConfig (2nd): %v", err)
+	}
+	t1 := first.GetUpdateTime().AsTime()
+	t2 := second.GetUpdateTime().AsTime()
+	if !t1.Equal(t2) {
+		t.Errorf("UpdateTime changed between calls: %v != %v", t1, t2)
+	}
+}
+
+// TestUpdateGoogleChannelConfig_NameRequired verifies that calling
+// UpdateGoogleChannelConfig with an empty name returns InvalidArgument.
+func TestUpdateGoogleChannelConfig_NameRequired(t *testing.T) {
+	s := newTestStorage(t)
+	ctx := context.Background()
+
+	cfg := &eventarcpb.GoogleChannelConfig{
+		// Name intentionally empty.
+		CryptoKeyName: "projects/p/locations/l/keyRings/kr/cryptoKeys/k",
+	}
+	_, err := s.UpdateGoogleChannelConfig(ctx, cfg, nil)
+	if err == nil {
+		t.Fatal("expected InvalidArgument error, got nil")
+	}
+	st, ok := status.FromError(err)
+	if !ok || st.Code() != codes.InvalidArgument {
+		t.Errorf("error code = %v, want InvalidArgument", err)
 	}
 }
 

@@ -142,6 +142,7 @@ func (s *Storage) CreateTrigger(ctx context.Context, parent, triggerID string, t
 	stored.Uid = uid
 	stored.CreateTime = now
 	stored.UpdateTime = now
+	stored.Etag = newEtag()
 
 	s.triggers[name] = stored
 	return cloneProto(stored), nil
@@ -186,6 +187,12 @@ func (s *Storage) UpdateTrigger(ctx context.Context, trigger *eventarcpb.Trigger
 				stored.ServiceAccount = trigger.GetServiceAccount()
 			case "channel":
 				stored.Channel = trigger.GetChannel()
+			case "*":
+				stored.Labels = trigger.GetLabels()
+				stored.Destination = trigger.GetDestination()
+				stored.EventFilters = trigger.GetEventFilters()
+				stored.ServiceAccount = trigger.GetServiceAccount()
+				stored.Channel = trigger.GetChannel()
 			}
 		}
 	} else {
@@ -198,6 +205,7 @@ func (s *Storage) UpdateTrigger(ctx context.Context, trigger *eventarcpb.Trigger
 	}
 
 	stored.UpdateTime = timestamppb.Now()
+	stored.Etag = newEtag()
 	return cloneProto(stored), nil
 }
 
