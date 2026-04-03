@@ -74,13 +74,18 @@ func (s *Store) CreateDone(parent string, resource proto.Message) (*longrunningp
 
 // GetOperation implements OperationsServer. Returns the operation by name or
 // NotFound if it does not exist.
+//
+// The REST gateway (generated from google.longrunning.Operations proto) encodes
+// operation names with a leading "operations/" prefix in the HTTP path. Strip
+// that prefix so that both gRPC callers (raw name) and REST callers work.
 func (s *Store) GetOperation(_ context.Context, req *longrunningpb.GetOperationRequest) (*longrunningpb.Operation, error) {
+	name := strings.TrimPrefix(req.GetName(), "operations/")
 	s.mu.RLock()
-	op, ok := s.ops[req.GetName()]
+	op, ok := s.ops[name]
 	s.mu.RUnlock()
 
 	if !ok {
-		return nil, status.Errorf(codes.NotFound, "operation %q not found", req.GetName())
+		return nil, status.Errorf(codes.NotFound, "operation %q not found", name)
 	}
 	return op, nil
 }
@@ -88,15 +93,16 @@ func (s *Store) GetOperation(_ context.Context, req *longrunningpb.GetOperationR
 // DeleteOperation implements OperationsServer. Removes the operation or
 // returns NotFound if it does not exist.
 func (s *Store) DeleteOperation(_ context.Context, req *longrunningpb.DeleteOperationRequest) (*emptypb.Empty, error) {
+	name := strings.TrimPrefix(req.GetName(), "operations/")
 	s.mu.Lock()
-	_, ok := s.ops[req.GetName()]
+	_, ok := s.ops[name]
 	if ok {
-		delete(s.ops, req.GetName())
+		delete(s.ops, name)
 	}
 	s.mu.Unlock()
 
 	if !ok {
-		return nil, status.Errorf(codes.NotFound, "operation %q not found", req.GetName())
+		return nil, status.Errorf(codes.NotFound, "operation %q not found", name)
 	}
 	return &emptypb.Empty{}, nil
 }
@@ -109,8 +115,11 @@ func (s *Store) CancelOperation(_ context.Context, _ *longrunningpb.CancelOperat
 
 // ListOperations implements OperationsServer. Returns all operations whose
 // name has the given req.Name as a prefix.
+//
+// The REST gateway passes the URL path segment after /v1/operations/ as the
+// name field; strip any leading "operations/" prefix for compatibility.
 func (s *Store) ListOperations(_ context.Context, req *longrunningpb.ListOperationsRequest) (*longrunningpb.ListOperationsResponse, error) {
-	prefix := req.GetName()
+	prefix := strings.TrimPrefix(req.GetName(), "operations/")
 
 	s.mu.RLock()
 	var ops []*longrunningpb.Operation
