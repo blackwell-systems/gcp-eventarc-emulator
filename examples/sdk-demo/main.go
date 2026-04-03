@@ -5,7 +5,13 @@
 // changes from what you'd write targeting real GCP — only the connection setup
 // differs (insecure gRPC instead of default credentials).
 //
-// Usage:
+// Usage (local):
+//
+//	go run ./cmd/server-dual                              # start emulator
+//	go run ./examples/webhook-receiver                    # start webhook receiver (separate terminal)
+//	EVENTARC_EMULATOR_HOST=localhost:9085 go run main.go
+//
+// Usage (Docker):
 //
 //	docker compose up -d        # start emulator + webhook receiver
 //	go run main.go
@@ -195,7 +201,7 @@ func main() {
 	})
 	must(err, "publish events")
 	fmt.Printf("   published: %s (type: %s)\n", ce.GetId(), ce.GetType())
-	fmt.Println("   → event routed to trigger destination")
+	fmt.Println("   → event dispatched; check webhook receiver logs for delivery confirmation")
 
 	// ── 8. Delete the trigger ────────────────────────────────────────────────
 
@@ -209,8 +215,9 @@ func main() {
 	fmt.Printf("   deleted: %s\n", trigger.GetName())
 
 	fmt.Println("\n✓ SDK demo complete")
-	fmt.Println("  Run: docker compose logs webhook")
-	fmt.Println("  to see the delivered CloudEvent with Ce-* headers")
+	fmt.Println("  If using Docker:  docker compose logs webhook")
+	fmt.Println("  If running local: check your webhook receiver's stdout")
+	fmt.Println("  to see the delivered CloudEvent with Ce-* headers.")
 	fmt.Println()
 }
 
