@@ -24,6 +24,10 @@ Enables local development, integration testing, and CI pipelines for event-drive
 
 **Prerequisites:** Go 1.24+
 
+**For Docker-based workflows** (demo, sdk-demo): Docker with Compose plugin v2
+(`docker compose version`). Docker Desktop includes this by default. On Docker
+Engine, install the Compose plugin: https://docs.docker.com/compose/install/
+
 ```bash
 go install github.com/blackwell-systems/gcp-eventarc-emulator/cmd/server-dual@latest
 server-dual
@@ -158,6 +162,9 @@ curl "http://localhost:8085/v1/projects/my-project/locations/us-central1/provide
 docker build -t gcp-eventarc-emulator .
 docker run -p 9085:9085 -p 8085:8085 gcp-eventarc-emulator
 ```
+
+> Note: The `docker compose` examples require Docker Compose plugin v2 (not the
+> standalone `docker-compose` v1). Verify with `docker compose version`.
 
 **Go install:**
 ```bash

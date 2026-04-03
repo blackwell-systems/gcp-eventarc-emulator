@@ -43,6 +43,11 @@ func main() {
 			}
 		}
 
+		// Print Authorization header if present (set by EVENTARC_EMULATOR_TOKEN)
+		if auth := r.Header.Get("Authorization"); auth != "" {
+			fmt.Printf("  Authorization: %s\n", auth)
+		}
+
 		fmt.Printf("  Content-Type: %s\n", r.Header.Get("Content-Type"))
 
 		if len(body) > 0 {
