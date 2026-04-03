@@ -3,6 +3,8 @@
 // Provides both gRPC and REST/HTTP APIs for the Google Cloud Eventarc service.
 // This server exposes both protocols simultaneously for maximum flexibility.
 //
+// When to use: recommended for all local development; provides both gRPC and REST access.
+//
 // Usage:
 //
 //	gcp-eventarc-emulator-dual --grpc-port 9085 --http-port 8085
@@ -28,6 +30,7 @@ import (
 
 	"github.com/blackwell-systems/gcp-eventarc-emulator/internal/dispatcher"
 	"github.com/blackwell-systems/gcp-eventarc-emulator/internal/gateway"
+	"github.com/blackwell-systems/gcp-eventarc-emulator/internal/logger"
 	"github.com/blackwell-systems/gcp-eventarc-emulator/internal/publisher"
 	"github.com/blackwell-systems/gcp-eventarc-emulator/internal/router"
 	"github.com/blackwell-systems/gcp-eventarc-emulator/internal/server"
@@ -36,7 +39,7 @@ import (
 var (
 	grpcPort = flag.Int("grpc-port", getEnvPort("EVENTARC_EMULATOR_HOST", 9085), "gRPC port to listen on")
 	httpPort = flag.Int("http-port", getEnvInt("EVENTARC_HTTP_PORT", 8085), "HTTP port to listen on")
-	logLevel = flag.String("log-level", getEnv("GCP_MOCK_LOG_LEVEL", "info"), "Log level (debug, info, warn, error)")
+	logLevel = flag.String("log-level", getEnv("GCP_MOCK_LOG_LEVEL", "info"), "Log level (debug, info, warn, error) (env: GCP_MOCK_LOG_LEVEL; flag takes precedence)")
 	version  = "0.1.0"
 )
 
@@ -53,11 +56,12 @@ func validateLogLevel(level string) error {
 
 func main() {
 	flag.Usage = func() {
-		fmt.Fprintf(os.Stderr, "GCP Eventarc Emulator v%s — gRPC + REST server\n\n", version)
+		fmt.Fprintf(os.Stderr, "GCP Eventarc Emulator v%s — gRPC + REST server\n", version)
+		fmt.Fprintf(os.Stderr, "When to use: recommended for all local development; provides both gRPC and REST access.\n\n")
 		fmt.Fprintf(os.Stderr, "Usage: server-dual [flags]\n\nFlags:\n")
 		flag.PrintDefaults()
 		fmt.Fprintf(os.Stderr, "\nEnvironment Variables:\n")
-		fmt.Fprintf(os.Stderr, "  EVENTARC_EMULATOR_HOST  gRPC host:port (e.g. localhost:9085)\n")
+		fmt.Fprintf(os.Stderr, "  EVENTARC_EMULATOR_HOST  gRPC host:port for clients (e.g. localhost:9085)\n")
 		fmt.Fprintf(os.Stderr, "  EVENTARC_HTTP_PORT      HTTP port (default: 8085)\n")
 		fmt.Fprintf(os.Stderr, "  GCP_MOCK_LOG_LEVEL      Log level: debug, info, warn, error (default: info)\n")
 		fmt.Fprintf(os.Stderr, "  IAM_MODE                IAM enforcement: off, permissive, strict (default: off)\n")
@@ -68,7 +72,7 @@ func main() {
 	flag.Parse()
 
 	if *showVersion {
-		fmt.Printf("GCP Eventarc Emulator v%s\n", version)
+		fmt.Printf("GCP Eventarc Emulator v%s (server-dual)\n", version)
 		os.Exit(0)
 	}
 
@@ -77,8 +81,19 @@ func main() {
 		os.Exit(1)
 	}
 
+	if *grpcPort < 1 || *grpcPort > 65535 {
+		fmt.Fprintf(os.Stderr, "invalid --grpc-port %d: must be in range 1-65535\n", *grpcPort)
+		os.Exit(1)
+	}
+	if *httpPort < 1 || *httpPort > 65535 {
+		fmt.Fprintf(os.Stderr, "invalid --http-port %d: must be in range 1-65535\n", *httpPort)
+		os.Exit(1)
+	}
+
+	lgr := logger.New(*logLevel)
+
 	log.Printf("GCP Eventarc Emulator v%s (gRPC + REST)", version)
-	log.Printf("Log level: %s", *logLevel)
+	lgr.Info("Log level: %s", *logLevel)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -96,17 +111,17 @@ func main() {
 		log.Fatalf("Failed to create server: %v", err)
 	}
 
-	log.Printf("IAM mode: %s", srv.IAMMode())
+	lgr.Info("IAM mode: %s", srv.IAMMode())
 	if token := os.Getenv("EVENTARC_EMULATOR_TOKEN"); token != "" {
-		log.Printf("Bearer token injection: enabled")
+		lgr.Info("Bearer token injection: enabled")
 	}
 
 	// Wire up router and dispatcher
-	rtr := router.NewRouter(srv.Storage())
-	dsp := dispatcher.NewDispatcher(nil)
+	rtr := router.NewRouter(srv.Storage(), lgr)
+	dsp := dispatcher.NewDispatcher(nil, lgr)
 
 	// Create publisher gRPC service
-	pub := publisher.NewServer(rtr, dsp, srv.Storage())
+	pub := publisher.NewServer(rtr, dsp, srv.Storage(), lgr)
 
 	// Create the shared gRPC server with all services registered
 	grpcSrv := server.NewGRPCServer(srv, pub)
@@ -117,7 +132,7 @@ func main() {
 
 	// Start gRPC server in background (externally exposed)
 	go func() {
-		log.Printf("gRPC server listening at %v", lis.Addr())
+		lgr.Info("gRPC server listening at %v", lis.Addr())
 		close(readyCh) // signal that gRPC is ready to accept connections
 		if err := grpcSrv.Serve(lis); err != nil {
 			log.Fatalf("Failed to serve gRPC: %v", err)
@@ -135,7 +150,7 @@ func main() {
 
 	httpAddr := fmt.Sprintf(":%d", *httpPort)
 	go func() {
-		log.Printf("HTTP gateway listening at %s", httpAddr)
+		lgr.Info("HTTP gateway listening at %s", httpAddr)
 		if err := gw.Start(httpAddr); err != nil {
 			log.Fatalf("Failed to serve HTTP: %v", err)
 		}
@@ -143,9 +158,9 @@ func main() {
 
 	// Wait for gRPC to confirm it is serving before printing "Ready"
 	<-readyCh
-	log.Printf("Ready to accept both gRPC and REST requests")
-	log.Printf("gRPC: localhost:%d", *grpcPort)
-	log.Printf("REST: http://localhost:%d/v1/projects/my-project/locations/us-central1/triggers", *httpPort)
+	lgr.Info("Ready to accept both gRPC and REST requests")
+	lgr.Info("gRPC: localhost:%d", *grpcPort)
+	lgr.Info("REST: http://localhost:%d/v1/projects/my-project/locations/us-central1/triggers", *httpPort)
 
 	// Wait for interrupt signal to gracefully shut down
 	quit := make(chan os.Signal, 1)
