@@ -54,17 +54,16 @@ type Server struct {
 // An optional *logger.Logger may be supplied as the fourth argument;
 // if omitted or nil, defaults to info level.
 func NewServer(router RouterMatcher, dispatcher EventDispatcher, channels ChannelChecker, log ...*logger.Logger) *Server {
-	s := &Server{
+	var lgr *logger.Logger
+	if len(log) > 0 {
+		lgr = log[0]
+	}
+	return &Server{
 		router:     router,
 		dispatcher: dispatcher,
 		channels:   channels,
+		logger:     logger.OrDefault(lgr),
 	}
-	if len(log) > 0 && log[0] != nil {
-		s.logger = log[0]
-	} else {
-		s.logger = logger.New("info")
-	}
-	return s
 }
 
 // PublishEvents implements PublisherServer.

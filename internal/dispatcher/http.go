@@ -41,13 +41,11 @@ func NewDispatcher(client *http.Client, log ...*logger.Logger) *Dispatcher {
 	if client == nil {
 		client = &http.Client{Timeout: defaultTimeout}
 	}
-	d := &Dispatcher{client: client}
-	if len(log) > 0 && log[0] != nil {
-		d.logger = log[0]
-	} else {
-		d.logger = logger.New("info")
+	var lgr *logger.Logger
+	if len(log) > 0 {
+		lgr = log[0]
 	}
-	return d
+	return &Dispatcher{client: client, logger: logger.OrDefault(lgr)}
 }
 
 // Dispatch POSTs the CloudEvent in binary content mode to the trigger's destination.
