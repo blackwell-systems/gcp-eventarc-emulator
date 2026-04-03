@@ -648,6 +648,16 @@ func TestIntegration_PublishEvents_EndToEnd(t *testing.T) {
 		t.Fatalf("CreateTrigger() error: %v", err)
 	}
 
+	// Create the channel that events will be published to.
+	_, err = eventarcClient.CreateChannel(ctx, &eventarcpb.CreateChannelRequest{
+		Parent:    parent,
+		ChannelId: "test-channel",
+		Channel:   &eventarcpb.Channel{},
+	})
+	if err != nil {
+		t.Fatalf("CreateChannel() error: %v", err)
+	}
+
 	// Build a CloudEvent proto to publish.
 	ceProto := &publishingpb.CloudEvent{
 		Id:          fmt.Sprintf("test-id-%d", 1),
