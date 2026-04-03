@@ -1,0 +1,1111 @@
+title: Cold-Start UX Audit Fixes
+feature_slug: audit-fixes
+verdict: SUITABLE
+suitability_assessment: |
+    All 20 audit findings are clearly implementable with known file locations and
+    well-defined fix strategies. No root-cause investigation is required.
+
+    File decomposition: changes span 9 distinct files across 4 packages. The
+    publisher, storage, gateway, cmd, and examples layers are independent enough
+    to support 4-5 parallel agents with disjoint ownership.
+
+    The cmd/* main.go files all need startup-log and flag changes together. Because
+    agents C (storage) and E (cmd) operate on entirely separate packages, and agents
+    A (publisher+server) and B (gateway) are independent, Wave 1 can run 4 agents
+    in parallel. Wave 2 has a single agent for cmd/* (sequenced after Wave 1 so
+    IAM mode is stable before cmd/* references it in startup logs).
+
+    Pre-implementation status: all 20 findings confirmed as TODO against current
+    codebase (v0.1.0, commit 8855e91). None are already fixed.
+
+    Time estimate:
+      Scout:  ~15 min
+      Wave 1: ~20 min (4 agents × ~20 min avg, fully parallel)
+      Wave 2: ~15 min (1 agent)
+      Merge/verify: ~5 min
+      Total SAW: ~55 min
+      Sequential baseline: ~120 min
+      Savings: ~65 min (~54% faster)
+test_command: go test ./...
+lint_command: go vet ./...
+file_ownership:
+    - file: internal/publisher/server.go
+      agent: A
+      wave: 1
+      action: modify
+    - file: internal/server/server.go
+      agent: A
+      wave: 1
+      action: modify
+    - file: internal/publisher/server_test.go
+      agent: A
+      wave: 1
+      action: modify
+    - file: internal/gateway/gateway.go
+      agent: B
+      wave: 1
+      action: modify
+    - file: internal/server/storage.go
+      agent: C
+      wave: 1
+      action: modify
+    - file: internal/server/storage_channel.go
+      agent: C
+      wave: 1
+      action: modify
+    - file: examples/webhook-receiver/main.go
+      agent: D
+      wave: 1
+      action: modify
+    - file: README.md
+      agent: D
+      wave: 1
+      action: modify
+    - file: cmd/server/main.go
+      agent: E
+      wave: 2
+      action: modify
+      depends_on:
+        - A
+        - C
+    - file: cmd/server-rest/main.go
+      agent: E
+      wave: 2
+      action: modify
+      depends_on:
+        - A
+        - C
+    - file: cmd/server-dual/main.go
+      agent: E
+      wave: 2
+      action: modify
+      depends_on:
+        - A
+        - C
+interface_contracts:
+    - name: PublishEvents (channel existence check)
+      description: |
+        PublishEvents must validate that the named channel exists before routing.
+        Returns gRPC NOT_FOUND if the channel does not exist in storage.
+      definition: |
+        // PublishEvents now returns NOT_FOUND if the channel does not exist.
+        // Requires the publisher.Server to hold a reference to a ChannelChecker
+        // interface so it can validate the channel before dispatching.
+        //
+        // New interface in internal/publisher/server.go:
+        type ChannelChecker interface {
+            GetChannelExists(ctx context.Context, channelName string) (bool, error)
+        }
+        //
+        // NewServer signature change:
+        func NewServer(router RouterMatcher, dispatcher EventDispatcher, channels ChannelChecker) *Server
+        //
+        // PublishEvents updated behaviour:
+        // 1. Call channels.GetChannelExists(ctx, req.GetChannel())
+        // 2. If not found → return nil, status.Errorf(codes.NotFound, "Channel %q not found", req.GetChannel())
+        // 3. Otherwise proceed as before
+      location: internal/publisher/server.go
+    - name: ChannelChecker (new interface)
+      description: |
+        Allows publisher.Server to check channel existence without importing the
+        full server package (avoids import cycle publisher→server→publisher).
+        Implemented by *server.Storage.
+      definition: |
+        // In internal/publisher/server.go
+        type ChannelChecker interface {
+            GetChannelExists(ctx context.Context, channelName string) (bool, error)
+        }
+        //
+        // New method on *server.Storage in internal/server/storage_channel.go:
+        func (s *Storage) GetChannelExists(ctx context.Context, name string) (bool, error)
+      location: internal/publisher/server.go
+    - name: Storage.GetChannelExists
+      description: |
+        New method on *server.Storage. Returns true if the channel exists, false
+        if it does not. Never returns NotFound — uses bool instead so the publisher
+        can decide the error message.
+      definition: |
+        // In internal/server/storage_channel.go
+        func (s *Storage) GetChannelExists(ctx context.Context, name string) (bool, error) {
+            s.mu.RLock()
+            defer s.mu.RUnlock()
+            _, ok := s.channels[name]
+            return ok, nil
+        }
+      location: internal/server/storage_channel.go
+    - name: NewServer (publisher) updated signature
+      description: |
+        publisher.NewServer gains a third parameter for the ChannelChecker.
+        All callers in cmd/* must be updated in Wave 2.
+      definition: |
+        func NewServer(router RouterMatcher, dispatcher EventDispatcher, channels ChannelChecker) *Server
+      location: internal/publisher/server.go
+    - name: NewServer (server) — IAM mode accessor
+      description: |
+        server.Server needs a method to expose the active IAM mode string so
+        cmd/* main.go files can log it at startup without accessing unexported fields.
+      definition: |
+        // In internal/server/server.go
+        func (s *Server) IAMMode() string
+        // Returns one of: "off", "permissive", "strict" (matching emulatorauth.AuthMode string values)
+      location: internal/server/server.go
+    - name: validateLogLevel
+      description: |
+        Shared helper that validates a log level string. Returns an error message
+        string (non-empty) if invalid; empty string if valid. Defined once per
+        cmd binary (each binary is its own main package, so no sharing needed —
+        each binary defines its own copy or uses an identical local func).
+      definition: |
+        // In each cmd/*/main.go:
+        func validateLogLevel(level string) error {
+            switch level {
+            case "debug", "info", "warn", "error":
+                return nil
+            default:
+                return fmt.Errorf("invalid log level %q: must be one of debug, info, warn, error", level)
+            }
+        }
+      location: cmd/server-dual/main.go
+    - name: Operations REST gateway registration
+      description: |
+        gateway.New must register the longrunning Operations service handler so
+        that GET /v1/{parent}/operations and GET /v1/{parent}/operations/{id} work
+        via REST. Requires adding a longrunning gRPC-gateway client registration.
+      definition: |
+        // In internal/gateway/gateway.go — New() function additions:
+        //
+        // Import: longrunningv1 "google.golang.org/genproto/googleapis/longrunning"
+        // (use the grpc-gateway generated handler if available, or register manually)
+        //
+        // The grpc-gateway for longrunning is available in the genproto module.
+        // Add to New():
+        //   if err := longrunningv1.RegisterOperationsHandlerClient(
+        //       ctx, mux,
+        //       longrunningv1.NewOperationsClient(conn),
+        //   ); err != nil {
+        //       conn.Close()
+        //       return nil, err
+        //   }
+        //
+        // Import path: "google.golang.org/genproto/googleapis/longrunning"
+        // Package is already an indirect dep via genproto in go.mod.
+      location: internal/gateway/gateway.go
+waves:
+    - number: 1
+      agents:
+        - id: A
+          task: |
+            You are implementing three related fixes in the publisher and server packages:
+
+            ## Fix 1: Publish to nonexistent channel returns NOT_FOUND (UX-critical)
+
+            File: internal/publisher/server.go
+
+            ### What to add
+
+            Add a new interface `ChannelChecker` to publisher/server.go:
+
+            ```go
+            // ChannelChecker is the interface needed by the publisher to validate
+            // that a channel exists before routing events to it.
+            type ChannelChecker interface {
+                GetChannelExists(ctx context.Context, channelName string) (bool, error)
+            }
+            ```
+
+            Add a `channels ChannelChecker` field to `Server` struct.
+
+            Change `NewServer` signature to:
+            ```go
+            func NewServer(router RouterMatcher, dispatcher EventDispatcher, channels ChannelChecker) *Server
+            ```
+
+            In `PublishEvents`, before calling `processAnySlice`, validate the channel:
+            ```go
+            if req.GetChannel() != "" {
+                exists, err := s.channels.GetChannelExists(ctx, req.GetChannel())
+                if err != nil {
+                    return nil, status.Errorf(codes.Internal, "channel lookup failed: %v", err)
+                }
+                if !exists {
+                    return nil, status.Errorf(codes.NotFound, "Channel %q not found", req.GetChannel())
+                }
+            }
+            ```
+
+            Import `"google.golang.org/grpc/codes"` and `"google.golang.org/grpc/status"` (add to imports if not present).
+
+            Note: `PublishChannelConnectionEvents` uses channel_connection, not channel — do NOT add the same check there.
+
+            ## Fix 2: CreateTrigger validates destination and eventFilters (UX-critical)
+
+            File: internal/server/server.go
+
+            In `CreateTrigger`, after the existing validations (parent, triggerId, trigger != nil),
+            add validation for destination and event filters:
+
+            ```go
+            if req.GetTrigger().GetDestination() == nil {
+                return nil, status.Error(codes.InvalidArgument, "trigger.destination is required")
+            }
+            if len(req.GetTrigger().GetEventFilters()) == 0 {
+                return nil, status.Error(codes.InvalidArgument, "trigger.event_filters must not be empty: at least one event filter is required")
+            }
+            ```
+
+            Insert these checks after the `if req.GetTrigger() == nil` check and before `checkPermission`.
+
+            ## Fix 3: IAM error quality (UX-improvement)
+
+            File: internal/server/server.go
+
+            In `checkPermission`, change the error code and message when the IAM client returns
+            an error (connection refused / unavailable):
+
+            Current code:
+            ```go
+            if err != nil {
+                return status.Errorf(codes.Internal, "IAM check failed: %v", err)
+            }
+            ```
+
+            Replace with:
+            ```go
+            if err != nil {
+                // Detect connection-refused / unavailable errors and return a user-friendly message.
+                errMsg := err.Error()
+                if strings.Contains(errMsg, "connection refused") || strings.Contains(errMsg, "Unavailable") {
+                    return status.Errorf(codes.FailedPrecondition,
+                        "IAM_MODE is active but no IAM emulator is reachable. "+
+                            "Start the IAM emulator or set IAM_MODE=off.")
+                }
+                return status.Errorf(codes.Internal, "IAM check failed: %v", err)
+            }
+            ```
+
+            Make sure `"strings"` is in the import block of `internal/publisher/server.go` (it is
+            already present there). Also ensure `google.golang.org/grpc/codes` and
+            `google.golang.org/grpc/status` are imported in `internal/publisher/server.go`
+            (they are NOT currently present — add them for the channel-not-found error path).
+
+            ## Fix 4: IAMMode() accessor method
+
+            File: internal/server/server.go
+
+            Add a new exported method that cmd/* main.go files will use in Wave 2:
+
+            ```go
+            // IAMMode returns the active IAM enforcement mode as a string.
+            // Returns "off", "permissive", or "strict".
+            func (s *Server) IAMMode() string {
+                return string(s.iamMode)
+            }
+            ```
+
+            Place this method near the other accessor methods (Storage(), LROStore()).
+
+            ## Fix 5: publishEvents routing feedback (UX-improvement)
+
+            File: internal/publisher/server.go
+
+            The `PublishEvents` method currently always returns `&publishingpb.PublishEventsResponse{}`.
+            Add a log line after processAnySlice so at minimum there is server-side feedback.
+            The proto PublishEventsResponse has no fields for matched-trigger counts, so the response
+            body stays empty — but add a log statement inside `matchAndDispatch` when a trigger IS matched:
+
+            In `matchAndDispatch`, after the `for _, t := range triggers` loop is entered but before
+            dispatching, add a log for matched triggers count:
+
+            ```go
+            if len(triggers) > 0 {
+                log.Printf("publisher: %d trigger(s) matched for parent=%s type=%s",
+                    len(triggers), parent, event.Type())
+            }
+            ```
+
+            Place this log BEFORE the dispatch loop, after the `if err != nil { return }` block.
+            Also add after the whole for-loop in `processAnySlice` a summary log if no events:
+
+            In `PublishEvents`, after calling `processAnySlice`, add:
+            ```go
+            if len(req.GetEvents()) == 0 {
+                log.Printf("publisher: PublishEvents called with 0 events for channel=%s", req.GetChannel())
+            }
+            ```
+
+            ## Tests
+
+            File: internal/publisher/server_test.go
+
+            **CRITICAL — update existing call sites first:**
+            The existing test file has 3 calls to `NewServer(rtr, dsp)` with 2 arguments:
+            - `TestPublishEvents_MatchingTrigger_Dispatches` (line ~75)
+            - `TestPublishEvents_NoMatchingTriggers_ReturnsEmpty` (line ~108)
+            - `TestPublishChannelConnectionEvents_Dispatches` (line ~136)
+
+            You MUST update all 3 of these to the new 3-argument form:
+            ```go
+            NewServer(rtr, dsp, &fakeChannelChecker{exists: true})
+            ```
+            without this change the test file will not compile.
+
+            Add a `fakeChannelChecker` struct following the same pattern as the existing
+            `fakeRouter`/`fakeDispatcher` types already in the test file:
+            ```go
+            type fakeChannelChecker struct{ exists bool }
+            func (f *fakeChannelChecker) ChannelExists(ctx context.Context, name string) bool {
+                return f.exists
+            }
+            ```
+
+            Then add new tests to cover:
+            1. `TestPublishEvents_ChannelNotFound` — call PublishEvents with a channel name that the
+               mock ChannelChecker returns false for; expect codes.NotFound.
+            2. `TestPublishEvents_ChannelExists` — call PublishEvents with a channel that exists;
+               verify no error.
+            3. `TestCreateTrigger_NoDestination` — test that CreateTrigger returns InvalidArgument
+               when destination is nil.
+            4. `TestCreateTrigger_NoEventFilters` — test that CreateTrigger returns InvalidArgument
+               when event_filters is empty.
+
+            ## Verification gate
+
+            ```
+            go build ./internal/publisher/... ./internal/server/...
+            go vet ./internal/publisher/... ./internal/server/...
+            go test ./internal/publisher/... ./internal/server/...
+            ```
+
+            ## Constraints
+
+            - Do NOT add imports that are not needed.
+            - Do NOT modify storage_channel.go — Agent C owns that file and will add GetChannelExists.
+            - The ChannelChecker interface in publisher/server.go must exactly match the method
+              signature that Agent C will implement on *server.Storage.
+            - Do NOT change the cmd/* main.go files — Agent E owns those in Wave 2.
+            - Do NOT add GetChannelExists to storage.go or storage_channel.go — Agent C does that.
+          files:
+            - internal/publisher/server.go
+            - internal/server/server.go
+            - internal/publisher/server_test.go
+        - id: B
+          task: |
+            You are fixing the LRO Operations REST routing (UX-critical finding #2).
+
+            ## Problem
+
+            The REST gateway (`internal/gateway/gateway.go`) registers handlers for
+            `EventarcService` and `PublisherService` but does NOT register the
+            `google.longrunning.Operations` service handler. As a result:
+              - `GET /v1/projects/{p}/locations/{l}/operations` returns 404/NOT_FOUND
+              - `GET /v1/projects/{p}/locations/{l}/operations/{id}` returns 404/NOT_FOUND
+
+            The gRPC server already has Operations registered (`longrunningpb.RegisterOperationsServer`
+            in internal/server/grpc.go), but the grpc-gateway mux has no route for it.
+
+            ## Fix
+
+            File: internal/gateway/gateway.go
+
+            Add registration of the longrunning Operations HTTP handler to `gateway.New()`.
+
+            The grpc-gateway generated handler for longrunning is available via:
+            ```
+            "google.golang.org/genproto/googleapis/longrunning"
+            ```
+            This package is already an indirect dependency (via genproto) in go.mod.
+
+            In the `New()` function, after the existing `publishingv1.RegisterPublisherHandlerClient`
+            call, add:
+
+            ```go
+            longrunningConn := longrunningpb.NewOperationsClient(conn)
+            if err := longrunningpbgw.RegisterOperationsHandlerClient(ctx, mux, longrunningConn); err != nil {
+                conn.Close()
+                return nil, err
+            }
+            ```
+
+            First check whether `google.golang.org/genproto/googleapis/longrunning` exports
+            `RegisterOperationsHandlerClient`. If the package does not export that function
+            (it is a lower-level package), try this alternative import path which is the
+            grpc-gateway generated file:
+            ```
+            lropbgw "google.golang.org/genproto/googleapis/longrunning"
+            ```
+            or use the longrunning autogen package:
+            ```
+            longrunningpb "cloud.google.com/go/longrunning/autogen/longrunningpb"
+            ```
+
+            ### Concrete steps
+
+            1. Run `grep -r "RegisterOperationsHandlerClient\|RegisterOperationsHandler" $(go env GOPATH)/pkg/mod/google.golang.org/genproto*/googleapis/longrunning/` to find the correct function name in the installed module.
+
+            2. If `RegisterOperationsHandlerClient` exists, import the package and call it after the
+               publisher registration in `New()`.
+
+            3. If the genproto package does NOT have a grpc-gateway handler (it is common for
+               longrunning to lack a grpc-gateway registration), implement a minimal manual route
+               registration using the grpc-gateway `runtime.ServeMux` pattern:
+
+               ```go
+               // Register a forwarding handler for /v1/{parent=**}/operations manually
+               // by constructing a grpc-gateway pattern and handler
+               ```
+
+               However, the preferred approach is to check the installed version of
+               `cloud.google.com/go/longrunning/autogen/longrunningpb` — it ships with
+               a `longrunning.pb.gw.go` generated file. Look for it at:
+               ```
+               $(go env GOPATH)/pkg/mod/cloud.google.com/go/longrunning@v0.8.0/autogen/longrunningpb/
+               ```
+               If `RegisterOperationsHandlerClient` is present there, use:
+               ```go
+               import longrunningpbgw "cloud.google.com/go/longrunning/autogen/longrunningpb"
+               // ...
+               if err := longrunningpbgw.RegisterOperationsHandlerClient(ctx, mux,
+                   longrunningpbgw.NewOperationsClient(conn)); err != nil {
+                   conn.Close()
+                   return nil, err
+               }
+               ```
+
+            4. If NEITHER package has a grpc-gateway generated handler, document this as a
+               known limitation in a code comment and skip the change — do not write a
+               hand-rolled HTTP mux proxy (that is outside scope). Instead, update the file
+               with a clear TODO comment explaining the gap.
+
+            ## Tests
+
+            No new test file needed (integration would require a running server). Verify
+            compilation succeeds. If you want to add a unit test confirming the registration,
+            add it to `internal/gateway/gateway_test.go` (create the file if it doesn't exist)
+            with a minimal test that calls `gateway.New("localhost:9999")` and checks err == nil.
+
+            ## Verification gate
+
+            ```
+            go build ./internal/gateway/...
+            go vet ./internal/gateway/...
+            go test ./internal/gateway/...
+            ```
+
+            ## Constraints
+
+            - Do NOT modify any other file.
+            - Do NOT add manual HTTP route handlers — use grpc-gateway registration only.
+            - Do NOT modify go.mod unless absolutely required to add the longrunning pb package.
+              The genproto package is already an indirect dep; promote it to direct if needed.
+          files:
+            - internal/gateway/gateway.go
+        - id: C
+          task: |
+            You are implementing three storage-layer data quality fixes (findings 7, 17, 19).
+
+            ## Fix 1: Channel state is always STATE_UNSPECIFIED — should be ACTIVE (finding 17)
+
+            File: internal/server/storage_channel.go
+
+            In `CreateChannel`, after setting the other server-assigned fields (Name, Uid,
+            CreateTime, UpdateTime), set the channel state to ACTIVE:
+
+            ```go
+            stored.State = eventarcpb.Channel_ACTIVE
+            ```
+
+            The `eventarcpb.Channel_ACTIVE` constant is from
+            `cloud.google.com/go/eventarc/apiv1/eventarcpb`.
+
+            Add this line before `s.channels[name] = stored`.
+
+            ## Fix 2: GoogleChannelConfig updateTime is null (finding 19)
+
+            File: internal/server/storage_channel.go
+
+            In `GetGoogleChannelConfig`, when returning a default zero-value config (the
+            `if !exists` branch), set UpdateTime to the current time:
+
+            Current:
+            ```go
+            return &eventarcpb.GoogleChannelConfig{Name: name}, nil
+            ```
+
+            Replace with:
+            ```go
+            return &eventarcpb.GoogleChannelConfig{
+                Name:       name,
+                UpdateTime: timestamppb.Now(),
+            }, nil
+            ```
+
+            `timestamppb` is already imported in storage_channel.go.
+
+            ## Fix 3: Provider event types are empty (finding 7)
+
+            File: internal/server/storage.go
+
+            The `defaultProviders` variable currently only sets `id` and `displayName`.
+            Seed each provider with its real GCP event types.
+
+            Replace the `defaultProviders` variable and the seeding loop with:
+
+            ```go
+            // providerEventType describes a single event type for a provider.
+            type providerEventType struct {
+                typeURI     string
+                description string
+            }
+
+            // defaultProviders is the set of well-known Eventarc providers seeded at startup.
+            // Event types match the real GCP Eventarc provider catalog.
+            var defaultProviders = []struct {
+                id          string
+                displayName string
+                eventTypes  []providerEventType
+            }{
+                {
+                    id:          "pubsub.googleapis.com",
+                    displayName: "Cloud Pub/Sub",
+                    eventTypes: []providerEventType{
+                        {"google.cloud.pubsub.topic.v1.messagePublished", "A message is published to a Pub/Sub topic."},
+                    },
+                },
+                {
+                    id:          "storage.googleapis.com",
+                    displayName: "Cloud Storage",
+                    eventTypes: []providerEventType{
+                        {"google.cloud.storage.object.v1.finalized", "An object is created or overwritten."},
+                        {"google.cloud.storage.object.v1.archived", "A live version of an object is archived or deleted."},
+                        {"google.cloud.storage.object.v1.deleted", "An object is permanently deleted."},
+                        {"google.cloud.storage.object.v1.metadataUpdated", "The metadata of an existing object changes."},
+                    },
+                },
+                {
+                    id:          "run.googleapis.com",
+                    displayName: "Cloud Run",
+                    eventTypes: []providerEventType{
+                        {"google.cloud.run.job.v1.executed", "A Cloud Run job execution finishes."},
+                    },
+                },
+                {
+                    id:          "cloudfunctions.googleapis.com",
+                    displayName: "Cloud Functions",
+                    eventTypes: []providerEventType{
+                        {"google.cloud.functions.function.v2.created", "A Cloud Functions function is created."},
+                        {"google.cloud.functions.function.v2.updated", "A Cloud Functions function is updated."},
+                        {"google.cloud.functions.function.v2.deleted", "A Cloud Functions function is deleted."},
+                    },
+                },
+                {
+                    id:          "cloudscheduler.googleapis.com",
+                    displayName: "Cloud Scheduler",
+                    eventTypes: []providerEventType{
+                        {"google.cloud.scheduler.job.v1.executed", "A Cloud Scheduler job is executed."},
+                    },
+                },
+            }
+            ```
+
+            Then update the seeding loop in `NewStorage` to populate event types:
+
+            ```go
+            for _, p := range defaultProviders {
+                name := fmt.Sprintf("projects/-/locations/-/providers/%s", p.id)
+                et := make([]*eventarcpb.EventType, 0, len(p.eventTypes))
+                for _, t := range p.eventTypes {
+                    et = append(et, &eventarcpb.EventType{
+                        Type:        t.typeURI,
+                        Description: t.description,
+                    })
+                }
+                s.providers[name] = &eventarcpb.Provider{
+                    Name:        name,
+                    DisplayName: p.displayName,
+                    EventTypes:  et,
+                }
+            }
+            ```
+
+            ## Fix 4: Add GetChannelExists to storage_channel.go (needed by Agent A's publisher fix)
+
+            File: internal/server/storage_channel.go
+
+            Add this new method to Storage, after the existing GetChannel method:
+
+            ```go
+            // GetChannelExists reports whether a channel with the given full resource
+            // name exists in storage. Used by the publisher to validate channels
+            // before routing events.
+            func (s *Storage) GetChannelExists(ctx context.Context, name string) (bool, error) {
+                s.mu.RLock()
+                defer s.mu.RUnlock()
+                _, ok := s.channels[name]
+                return ok, nil
+            }
+            ```
+
+            This satisfies the publisher.ChannelChecker interface defined by Agent A.
+
+            ## Tests
+
+            File: internal/server/storage_channel_test.go (or storage_test.go — check which
+            file already tests channel operations and use that one).
+
+            Add tests:
+            1. `TestCreateChannel_StateIsActive` — after CreateChannel, verify returned
+               channel.State == eventarcpb.Channel_ACTIVE.
+            2. `TestGetGoogleChannelConfig_DefaultHasUpdateTime` — GetGoogleChannelConfig on
+               a name that has never been stored should return UpdateTime != nil.
+            3. `TestGetChannelExists` — call GetChannelExists on a stored channel (true) and
+               on a missing name (false).
+            4. Add a test for provider event types: `TestProviderEventTypes_NotEmpty` — call
+               NewStorage, list providers, verify each provider has at least one EventType.
+
+            ## Verification gate
+
+            ```
+            go build ./internal/server/...
+            go vet ./internal/server/...
+            go test ./internal/server/...
+            ```
+
+            ## Constraints
+
+            - Do NOT modify server.go, server_test.go, grpc.go, storage.go providers
+              beyond the defaultProviders change, or any cmd/* file.
+            - The GetChannelExists method signature must exactly match:
+              `func (s *Storage) GetChannelExists(ctx context.Context, name string) (bool, error)`
+            - The eventarcpb.EventType struct fields are `Type` and `Description` — verify
+              with `grep -r "EventType" $(go env GOPATH)/pkg/mod/cloud.google.com/go/eventarc*`
+              if uncertain.
+          files:
+            - internal/server/storage.go
+            - internal/server/storage_channel.go
+        - id: D
+          task: |
+            You are fixing the examples and README (findings 4, 10, 15-webhook-receiver).
+
+            Note: examples/sdk-demo/main.go fixes (findings 10 + package comment) were applied
+            directly by the Orchestrator before wave launch (separate Go module — not owned by this agent).
+
+            ## Fix 3: Webhook receiver — print Authorization header (finding — ENV-VARS webhook)
+
+            File: examples/webhook-receiver/main.go
+
+            In the HTTP handler, after printing `Ce-*` headers, add a block that prints the
+            `Authorization` header if present:
+
+            ```go
+            // Print Authorization header if present (set by EVENTARC_EMULATOR_TOKEN)
+            if auth := r.Header.Get("Authorization"); auth != "" {
+                fmt.Printf("  Authorization: %s\n", auth)
+            }
+            ```
+
+            Insert this block AFTER the `ceHeaders` printing block and BEFORE the
+            `fmt.Printf("  Content-Type: %s\n", ...)` line.
+
+            ## Fix 4: README — add Docker Compose prerequisite (finding 4, UX-critical)
+
+            File: README.md
+
+            Find the Quick Start section. It currently reads:
+
+            ```
+            **Prerequisites:** Go 1.24+
+            ```
+
+            Replace with:
+
+            ```
+            **Prerequisites:** Go 1.24+
+
+            **For Docker-based workflows** (demo, sdk-demo): Docker with Compose plugin v2
+            (`docker compose version`). Docker Desktop includes this by default. On Docker
+            Engine, install the Compose plugin: https://docs.docker.com/compose/install/
+            ```
+
+            Also find the Docker (recommended) install section:
+            ```
+            **Docker (recommended):**
+            ```
+            Add a note after the docker run example:
+            ```
+            > Note: The `docker compose` examples require Docker Compose plugin v2 (not the
+            > standalone `docker-compose` v1). Verify with `docker compose version`.
+            ```
+
+            ## Verification gate
+
+            ```
+            go build ./examples/...
+            go vet ./examples/...
+            ```
+            (No automated tests for the example binaries — visual review is sufficient.)
+
+            ## Constraints
+
+            - Do NOT modify any file outside of examples/ and README.md.
+            - Keep the existing Docker workflow as a valid option — just demote it to secondary.
+            - Do NOT change server source code, gateway code, or cmd/* main.go files.
+          files:
+            - examples/webhook-receiver/main.go
+            - README.md
+    - number: 2
+      agents:
+        - id: E
+          task: |
+            You are updating all three cmd/* main.go files with startup UX improvements
+            (findings 5, 6, 9, 13, 14, 15, 16).
+
+            ## Context from Wave 1
+
+            Wave 1 Agent A added `server.Server.IAMMode() string` to internal/server/server.go.
+            Use this method to log IAM mode at startup. Agent A also changed
+            `publisher.NewServer` to accept a third `ChannelChecker` argument — you MUST
+            update all three cmd/* call sites to pass `srv.Storage()` as the third argument.
+
+            ## Fix: Update publisher.NewServer call sites (required for Wave 1 interface)
+
+            In ALL THREE cmd/* main.go files, change:
+            ```go
+            pub := publisher.NewServer(rtr, dsp)
+            ```
+            To:
+            ```go
+            pub := publisher.NewServer(rtr, dsp, srv.Storage())
+            ```
+
+            This is required because Agent A changed the NewServer signature.
+
+            ## Fix: --version flag (finding 5, UX-improvement)
+
+            In ALL THREE cmd/* main.go files, add a `--version` flag that prints the version
+            and exits 0. Add this BEFORE `flag.Parse()`:
+
+            ```go
+            showVersion := flag.Bool("version", false, "Print version and exit")
+            ```
+
+            After `flag.Parse()`, add:
+            ```go
+            if *showVersion {
+                fmt.Printf("GCP Eventarc Emulator v%s\n", version)
+                os.Exit(0)
+            }
+            ```
+
+            The `version` variable is already declared as `"0.1.0"` in each file.
+            Make sure `"fmt"` and `"os"` are in the import block (they already are).
+
+            ## Fix: log level validation (finding 6, UX-improvement)
+
+            In ALL THREE cmd/* main.go files, add a validation function and call it after
+            flag.Parse():
+
+            ```go
+            // validateLogLevel returns an error if the log level is not one of the
+            // accepted values.
+            func validateLogLevel(level string) error {
+                switch level {
+                case "debug", "info", "warn", "error":
+                    return nil
+                default:
+                    return fmt.Errorf("invalid --log-level %q: must be one of: debug, info, warn, error", level)
+                }
+            }
+            ```
+
+            After `flag.Parse()` (and after the version check), add:
+            ```go
+            if err := validateLogLevel(*logLevel); err != nil {
+                fmt.Fprintln(os.Stderr, err)
+                os.Exit(1)
+            }
+            ```
+
+            ## Fix: log IAM mode at startup (finding 9, UX-improvement)
+
+            In ALL THREE cmd/* main.go files, after creating the server (`srv, err := server.NewServer()`),
+            add a log line:
+
+            ```go
+            log.Printf("IAM mode: %s", srv.IAMMode())
+            ```
+
+            Place this after `if err != nil { log.Fatalf(...) }` and before creating the router.
+
+            ## Fix: consistent startup log format (finding 16, UX-polish)
+
+            Standardize the startup log sequence across all three binaries. After all the
+            above changes, each binary's startup sequence in main() should follow this pattern:
+            1. Version + protocol line (already present, keep as-is in each binary)
+            2. Log level line
+            3. IAM mode line (new)
+            4. Port binding log(s)
+            5. Ready message
+
+            ### cmd/server/main.go specific changes:
+            - Add `log.Printf("Log level: %s", *logLevel)` immediately after the version log.
+            - Keep the "Publisher service registered" log REMOVED (it is an internal detail
+              not shown in the other variants) — actually, to avoid disrupting existing users
+              who might parse that line, KEEP the line but move it AFTER the ready message.
+            - The ready message "Ready to accept connections" stays at its current position
+              (after the server starts listening) but MOVE IT to after the goroutine is
+              launched so the sequence is: listen → log "Server listening" → log "Ready".
+              Current order in server/main.go has the log BEFORE goroutine, which is fine
+              for the gRPC-only variant since it's blocking.
+
+            ### cmd/server-rest/main.go specific changes:
+            - The three "Starting..." lines at the top are fine to keep, but ensure Log level
+              is printed before them: add `log.Printf("Log level: %s", *logLevel)` before
+              `log.Printf("Starting gRPC backend on internal port %d", *grpcPort)`.
+              Actually the log-level line is already there — just ensure IAM mode comes after it.
+
+            ### cmd/server-dual/main.go specific changes:
+            - The "Ready" log + gRPC/REST URL lines are printed from inside the HTTP goroutine,
+              which races with the gRPC goroutine. Fix the ordering issue (finding 13):
+              Move the ready message and URL lines OUT of the HTTP goroutine and into the
+              main goroutine, printed after a short synchronization. The cleanest fix without
+              adding channels/WaitGroups is to use a `readyCh chan struct{}`:
+
+              ```go
+              readyCh := make(chan struct{})
+
+              go func() {
+                  log.Printf("gRPC server listening at %v", lis.Addr())
+                  close(readyCh) // signal that gRPC is ready to accept connections
+                  if err := grpcSrv.Serve(lis); err != nil {
+                      log.Fatalf("Failed to serve gRPC: %v", err)
+                  }
+              }()
+
+              go func() {
+                  log.Printf("HTTP gateway listening at %s", httpAddr)
+                  if err := gw.Start(httpAddr); err != nil {
+                      log.Fatalf("Failed to serve HTTP: %v", err)
+                  }
+              }()
+
+              // Wait for gRPC to confirm it is serving before printing "Ready"
+              <-readyCh
+              log.Printf("Ready to accept both gRPC and REST requests")
+              log.Printf("gRPC: localhost:%d", *grpcPort)
+              log.Printf("REST: http://localhost:%d/v1/projects/{project}/locations/{location}/triggers", *httpPort)
+              ```
+
+              Remove the three `log.Printf` calls from inside the HTTP goroutine.
+
+            ## Fix: env var help text (finding 14, UX-polish)
+
+            In ALL THREE cmd/* main.go files, add a custom Usage function that appends
+            env var documentation to the default usage output. Add this BEFORE `flag.Parse()`:
+
+            For cmd/server/main.go:
+            ```go
+            flag.Usage = func() {
+                fmt.Fprintf(os.Stderr, "GCP Eventarc Emulator v%s — gRPC-only server\n\n", version)
+                fmt.Fprintf(os.Stderr, "Usage: server [flags]\n\nFlags:\n")
+                flag.PrintDefaults()
+                fmt.Fprintf(os.Stderr, "\nEnvironment Variables:\n")
+                fmt.Fprintf(os.Stderr, "  EVENTARC_EMULATOR_HOST  gRPC server host:port (e.g. localhost:9085)\n")
+                fmt.Fprintf(os.Stderr, "  GCP_MOCK_LOG_LEVEL      Log level: debug, info, warn, error (default: info)\n")
+                fmt.Fprintf(os.Stderr, "  IAM_MODE                IAM enforcement: off, permissive, strict (default: off)\n")
+            }
+            ```
+
+            For cmd/server-rest/main.go:
+            ```go
+            flag.Usage = func() {
+                fmt.Fprintf(os.Stderr, "GCP Eventarc Emulator v%s — REST-only server\n\n", version)
+                fmt.Fprintf(os.Stderr, "Usage: server-rest [flags]\n\nFlags:\n")
+                flag.PrintDefaults()
+                fmt.Fprintf(os.Stderr, "\nEnvironment Variables:\n")
+                fmt.Fprintf(os.Stderr, "  EVENTARC_HTTP_PORT      HTTP port (default: 8085)\n")
+                fmt.Fprintf(os.Stderr, "  GCP_MOCK_LOG_LEVEL      Log level: debug, info, warn, error (default: info)\n")
+                fmt.Fprintf(os.Stderr, "  IAM_MODE                IAM enforcement: off, permissive, strict (default: off)\n")
+            }
+            ```
+
+            For cmd/server-dual/main.go:
+            ```go
+            flag.Usage = func() {
+                fmt.Fprintf(os.Stderr, "GCP Eventarc Emulator v%s — gRPC + REST server\n\n", version)
+                fmt.Fprintf(os.Stderr, "Usage: server-dual [flags]\n\nFlags:\n")
+                flag.PrintDefaults()
+                fmt.Fprintf(os.Stderr, "\nEnvironment Variables:\n")
+                fmt.Fprintf(os.Stderr, "  EVENTARC_EMULATOR_HOST  gRPC host:port (e.g. localhost:9085)\n")
+                fmt.Fprintf(os.Stderr, "  EVENTARC_HTTP_PORT      HTTP port (default: 8085)\n")
+                fmt.Fprintf(os.Stderr, "  GCP_MOCK_LOG_LEVEL      Log level: debug, info, warn, error (default: info)\n")
+                fmt.Fprintf(os.Stderr, "  IAM_MODE                IAM enforcement: off, permissive, strict (default: off)\n")
+            }
+            ```
+
+            ## Fix: flag naming inconsistency (finding 15, UX-polish)
+
+            File: cmd/server/main.go only.
+
+            The gRPC-only `server` binary uses `--port` while the others use `--grpc-port`.
+            Add `--grpc-port` as an alias. The simplest approach that avoids breaking existing
+            users of `--port`:
+
+            ```go
+            // Keep --port for backwards compatibility; add --grpc-port as the canonical name.
+            port     = flag.Int("port", getEnvPort("EVENTARC_EMULATOR_HOST", 9085), "Port to listen on (deprecated: use --grpc-port)")
+            grpcPort = flag.Int("grpc-port", getEnvPort("EVENTARC_EMULATOR_HOST", 9085), "gRPC port to listen on")
+            ```
+
+            In main(), use `*grpcPort` if non-default, falling back to `*port`:
+            ```go
+            listenPort := *grpcPort
+            if listenPort == 9085 && *port != 9085 {
+                // --port was explicitly set but --grpc-port was not
+                listenPort = *port
+            }
+            ```
+            Then use `listenPort` everywhere `*port` was used.
+
+            This is a compatibility shim. Both flags work; `--grpc-port` is now canonical.
+
+            ## Fix: malformed JSON / clean error messages (finding 12, UX-improvement)
+
+            Note: The malformed JSON error comes from grpc-gateway's JSON unmarshaler, which
+            passes the raw Go json.Unmarshal error through. This is controlled by the
+            grpc-gateway runtime error handler, not by any server code. Adding a custom error
+            handler to the gateway mux would fix this globally but is out of scope for cmd/*.
+
+            In cmd/server-dual/main.go and cmd/server-rest/main.go, when creating the gateway,
+            document this limitation with a TODO comment:
+            ```go
+            // TODO(audit-fixes #12): grpc-gateway returns raw Go JSON parse errors for
+            // malformed request bodies. Add a custom runtime.WithErrorHandler to gateway.New()
+            // to intercept JSON parse errors and return "request body is not valid JSON".
+            ```
+
+            Add this comment near the `gw, err := gateway.New(...)` call in each file.
+
+            ## Verification gate
+
+            ```
+            go build ./cmd/...
+            go vet ./cmd/...
+            go test ./cmd/...
+            ```
+
+            ## Constraints
+
+            - Do NOT modify any file outside of cmd/*.
+            - The publisher.NewServer call site change (adding srv.Storage() as third arg) is
+              REQUIRED — without it, the build will fail because Agent A changed the signature.
+            - Keep backward compatibility: the `--port` flag in cmd/server/main.go must still
+              work so existing scripts are not broken.
+            - All three main.go files are independent main packages — define validateLogLevel
+              in each file separately (no shared package).
+          files:
+            - cmd/server/main.go
+            - cmd/server-rest/main.go
+            - cmd/server-dual/main.go
+          dependencies:
+            - A
+            - C
+quality_gates:
+    level: standard
+    gates:
+        - type: build
+          command: go build ./...
+          required: true
+        - type: lint
+          command: go vet ./...
+          required: true
+        - type: test
+          command: go test ./...
+          required: true
+pre_mortem:
+    overall_risk: medium
+    rows:
+        - scenario: |
+            Agent B cannot find RegisterOperationsHandlerClient in any available genproto
+            package. The longrunning operations grpc-gateway handler may not be shipped
+            with the current dependency versions.
+          likelihood: medium
+          impact: high
+          mitigation: |
+            Agent B's task includes explicit fallback instructions: if the handler is not
+            found, add a TODO comment and document as a known limitation. The other 19
+            findings still land. A follow-up can add a hand-rolled proxy if needed.
+        - scenario: |
+            Agent A's ChannelChecker interface causes a compile failure in Wave 2 if
+            Agent E's call-site update does not exactly match the new publisher.NewServer
+            signature (3 args instead of 2).
+          likelihood: low
+          impact: high
+          mitigation: |
+            Agent E's task explicitly states the signature change and shows the exact
+            call-site update required. The build gate in Wave 2 will catch this before
+            any merge.
+        - scenario: |
+            The server-dual/main.go ready-message ordering fix (readyCh channel) causes
+            a race condition if gRPC Serve() fails synchronously before close(readyCh).
+          likelihood: low
+          impact: medium
+          mitigation: |
+            The readyCh is closed in the gRPC goroutine before calling Serve — if Serve
+            fails immediately the goroutine calls log.Fatalf which terminates the process
+            before main reads from readyCh. No hang. Agent E should test that the server
+            starts and the ready log appears after the gRPC log.
+        - scenario: |
+            eventarcpb.EventType struct fields differ from what Agent C assumes (Type,
+            Description may be named differently in the protobuf-generated code).
+          likelihood: low
+          impact: medium
+          mitigation: |
+            Agent C's task instructs verification via grep against the installed module.
+            The proto-generated struct fields match the Eventarc proto definition which
+            uses `type` and `description` snake-case → Go PascalCase = Type, Description.
+        - scenario: |
+            Adding GetChannelExists to storage_channel.go in Agent C creates a new exported
+            method while Agent A references the interface in publisher/server.go. If agents
+            are merged in the wrong order the build fails between merges.
+          likelihood: low
+          impact: medium
+          mitigation: |
+            Both are in Wave 1 — they are merged together by the orchestrator after both
+            complete. The orchestrator runs go build ./... post-merge to catch any issues.
+            The interface contract exactly specifies the method signature.
+        - scenario: |
+            The trigger validation added in server.go (require destination + event_filters)
+            breaks an existing integration test that creates triggers without those fields.
+          likelihood: medium
+          impact: medium
+          mitigation: |
+            Agent A runs go test ./internal/server/... as part of verification. Any
+            existing test that creates a bare trigger will fail the test gate, prompting
+            Agent A to update those tests to include required fields. This is the correct
+            behavior — those tests were validating the wrong thing.
+critic_report:
+    verdict: PASS
+    agent_reviews:
+        A:
+            agent_id: A
+            verdict: PASS
+            notes: 'Errors resolved by Orchestrator: (1) clarified imports note to specify google.golang.org/grpc/codes and google.golang.org/grpc/status must be added to internal/publisher/server.go; (2) brief now explicitly instructs updating the 3 existing NewServer(rtr, dsp) call sites in server_test.go to 3-arg form before adding new tests.'
+        B:
+            agent_id: B
+            verdict: PASS
+            notes: 'Warning only (not blocking): RegisterOperationsHandlerClient does not exist in installed modules. Brief already contains correct fallback: add TODO comment and skip the change. Agent B should take the fallback path directly.'
+        C:
+            agent_id: C
+            verdict: PASS
+        D:
+            agent_id: D
+            verdict: PASS
+        E:
+            agent_id: E
+            verdict: PASS
+            notes: 'Flagged as error but critic description states "No independent error here beyond noting the hard dependency on Agent A completing Fix 4." Sequencing is correct via wave dependency — Agent E is Wave 2 and runs after Wave 1 Agent A commits IAMMode().'
+    summary: 'All 5 agents pass after Orchestrator corrections to Agent A brief. Agent B takes the documented fallback path for LRO handler registration.'
+    reviewed_at: "2026-04-03T01:35:00Z"
+    issue_count: 0
+state: SCOUT_PENDING
+injection_method: hook
