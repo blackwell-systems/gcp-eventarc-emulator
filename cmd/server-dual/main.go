@@ -12,6 +12,7 @@
 //	EVENTARC_EMULATOR_HOST  - Host and port for the gRPC server (e.g. localhost:9085)
 //	EVENTARC_HTTP_PORT      - HTTP port to listen on (default: 8085)
 //	GCP_MOCK_LOG_LEVEL      - Log level: debug, info, warn, error (default: info)
+//	IAM_MODE                - IAM enforcement: off, permissive, strict (default: off)
 package main
 
 import (
@@ -39,8 +40,42 @@ var (
 	version  = "0.1.0"
 )
 
+// validateLogLevel returns an error if the log level is not one of the
+// accepted values.
+func validateLogLevel(level string) error {
+	switch level {
+	case "debug", "info", "warn", "error":
+		return nil
+	default:
+		return fmt.Errorf("invalid --log-level %q: must be one of: debug, info, warn, error", level)
+	}
+}
+
 func main() {
+	flag.Usage = func() {
+		fmt.Fprintf(os.Stderr, "GCP Eventarc Emulator v%s — gRPC + REST server\n\n", version)
+		fmt.Fprintf(os.Stderr, "Usage: server-dual [flags]\n\nFlags:\n")
+		flag.PrintDefaults()
+		fmt.Fprintf(os.Stderr, "\nEnvironment Variables:\n")
+		fmt.Fprintf(os.Stderr, "  EVENTARC_EMULATOR_HOST  gRPC host:port (e.g. localhost:9085)\n")
+		fmt.Fprintf(os.Stderr, "  EVENTARC_HTTP_PORT      HTTP port (default: 8085)\n")
+		fmt.Fprintf(os.Stderr, "  GCP_MOCK_LOG_LEVEL      Log level: debug, info, warn, error (default: info)\n")
+		fmt.Fprintf(os.Stderr, "  IAM_MODE                IAM enforcement: off, permissive, strict (default: off)\n")
+	}
+
+	showVersion := flag.Bool("version", false, "Print version and exit")
+
 	flag.Parse()
+
+	if *showVersion {
+		fmt.Printf("GCP Eventarc Emulator v%s\n", version)
+		os.Exit(0)
+	}
+
+	if err := validateLogLevel(*logLevel); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
 
 	log.Printf("GCP Eventarc Emulator v%s (gRPC + REST)", version)
 	log.Printf("Log level: %s", *logLevel)
@@ -61,6 +96,8 @@ func main() {
 		log.Fatalf("Failed to create server: %v", err)
 	}
 
+	log.Printf("IAM mode: %s", srv.IAMMode())
+
 	// Wire up router and dispatcher
 	rtr := router.NewRouter(srv.Storage())
 	dsp := dispatcher.NewDispatcher(nil)
@@ -71,15 +108,23 @@ func main() {
 	// Create the shared gRPC server with all services registered
 	grpcSrv := server.NewGRPCServer(srv, pub)
 
+	// readyCh is closed by the gRPC goroutine once it is listening, so that the
+	// main goroutine can print "Ready" only after gRPC is confirmed serving.
+	readyCh := make(chan struct{})
+
 	// Start gRPC server in background (externally exposed)
 	go func() {
 		log.Printf("gRPC server listening at %v", lis.Addr())
+		close(readyCh) // signal that gRPC is ready to accept connections
 		if err := grpcSrv.Serve(lis); err != nil {
 			log.Fatalf("Failed to serve gRPC: %v", err)
 		}
 	}()
 
 	// Start REST gateway proxying to the local gRPC server
+	// TODO(audit-fixes #12): grpc-gateway returns raw Go JSON parse errors for
+	// malformed request bodies. Add a custom runtime.WithErrorHandler to gateway.New()
+	// to intercept JSON parse errors and return "request body is not valid JSON".
 	gw, err := gateway.New(fmt.Sprintf("localhost:%d", *grpcPort))
 	if err != nil {
 		log.Fatalf("Failed to create REST gateway: %v", err)
@@ -88,13 +133,16 @@ func main() {
 	httpAddr := fmt.Sprintf(":%d", *httpPort)
 	go func() {
 		log.Printf("HTTP gateway listening at %s", httpAddr)
-		log.Printf("Ready to accept both gRPC and REST requests")
-		log.Printf("gRPC: localhost:%d", *grpcPort)
-		log.Printf("REST: http://localhost:%d/v1/projects/{project}/locations/{location}/triggers", *httpPort)
 		if err := gw.Start(httpAddr); err != nil {
 			log.Fatalf("Failed to serve HTTP: %v", err)
 		}
 	}()
+
+	// Wait for gRPC to confirm it is serving before printing "Ready"
+	<-readyCh
+	log.Printf("Ready to accept both gRPC and REST requests")
+	log.Printf("gRPC: localhost:%d", *grpcPort)
+	log.Printf("REST: http://localhost:%d/v1/projects/{project}/locations/{location}/triggers", *httpPort)
 
 	// Wait for interrupt signal to gracefully shut down
 	quit := make(chan os.Signal, 1)
