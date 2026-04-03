@@ -733,6 +733,7 @@ waves:
             - internal/publisher/server.go
             - internal/router/router.go
             - internal/router/router_test.go
+      base_commit: 061be5e4172bfdc6aa732cdd47fdafd353052c3d
     - number: 2
       agents:
         - id: E
@@ -995,6 +996,79 @@ quality_gates:
         - type: test
           command: go test ./...
           required: true
+completion_reports:
+    A:
+        status: complete
+        branch: saw/audit-fixes-round2/wave1-agent-A
+        commit: ef26240
+        files_changed:
+            - internal/gateway/gateway.go
+            - internal/gateway/gateway_test.go
+        tests_added:
+            - TestProjectScopedLRORewriter_GetOperation
+            - TestProjectScopedLRORewriter_ListOperations
+            - TestProjectScopedLRORewriter_NonLROPath
+        verification: PASS
+        notes: Added projectScopedLRORewriter middleware to gateway.go. Rewrites GET /v1/projects/{p}/locations/{l}/operations/{id} to /v1/operations/<full-name> for GetOperation; calls ListOperations gRPC directly for list path. Added opsClient field to Gateway struct. Applied rewriter in Start(). All 4 gateway tests pass. Full go test ./... passes.
+    B:
+        status: complete
+        branch: saw/audit-fixes-round2/wave1-agent-B
+        commit: 57085d5
+        files_changed:
+            - internal/server/server.go
+            - internal/server/server_test.go
+            - internal/lro/store_test.go
+        tests_added:
+            - TestDeleteTrigger_LROResponseIsEmpty
+            - TestCreateTrigger_MultipleValidationErrors
+            - TestCreateTrigger_TriggerIdCamelCase
+            - TestCreateDone_WithEmpty
+        verification: PASS
+        notes: >-
+            All 7 Delete* methods now return emptypb.Empty in LRO response.
+            CreateTrigger collects all field violations and returns them together via
+            BadRequest details. triggerId camelCase fix applied. checkPermission denies
+            empty-principal requests in permissive mode. go test ./internal/server/... ./internal/lro/... passes.
+            Fixed by Orchestrator: unused variable declarations in Delete methods (fetched resource
+            but no longer passed to CreateDone) changed to _ assignments.
+    C:
+        status: complete
+        branch: saw/audit-fixes-round2/wave1-agent-C
+        commit: 40de0e8
+        files_changed:
+            - README.md
+            - cmd/server-dual/main.go
+            - cmd/server/main.go
+            - cmd/server-rest/main.go
+        verification: PASS
+        notes: 'C3: sdk-demo package comment was already correct; no README change needed for go run fix. C4: added SDK Demo section to README with channel creation note; CreateChannel step 3b was already present in sdk-demo/main.go. I9: publish output with Ce-Id grep hint already in sdk-demo. I10: added EVENTARC_EMULATOR_TOKEN startup log to all 3 cmd mains. P4: replaced {project}/{location} placeholders in server-dual. All gates pass: go build, go vet, go test, sdk-demo go build.'
+    D:
+        status: complete
+        branch: saw/audit-fixes-round2/wave1-agent-D
+        commit: 1d85da5
+        files_changed:
+            - internal/logger/logger.go
+            - internal/logger/logger_test.go
+            - internal/dispatcher/http.go
+            - internal/dispatcher/http_test.go
+            - internal/publisher/server.go
+            - internal/router/router.go
+            - internal/router/router_test.go
+        tests_added:
+            - TestNew_DefaultsToInfo
+            - TestLogger_Debug
+            - TestLogger_LevelFiltering
+            - TestLogger_IsDebug
+        verification: PASS
+        notes: >-
+            New internal/logger package with leveled output (Debug/Info/Warn/Error).
+            All three constructors (NewDispatcher, NewRouter, NewServer) use variadic
+            ...*logger.Logger; existing call sites compile unchanged.
+            Debug logging added in dispatcher (pre/post request), router (trigger evaluation),
+            and publisher (matched count, dispatch trigger). CEL error logs use Warn.
+            Fixed by Orchestrator: triggerMatches passed r.logger as parameter (was using r
+            undefined in package-level function); log.Printf changed to log.Warn in evalCELCondition.
+            go test ./internal/logger/... ./internal/dispatcher/... ./internal/publisher/... ./internal/router/... passes.
 pre_mortem:
     overall_risk: medium
     rows:
@@ -1072,37 +1146,25 @@ critic_report:
         A:
             agent_id: A
             verdict: PASS
-            issues: []
         B:
             agent_id: B
             verdict: PASS
-            issues: []
         C:
             agent_id: C
             verdict: PASS
-            issues: []
         D:
             agent_id: D
             verdict: PASS
-            issues: []
         E:
             agent_id: E
             verdict: PASS
-            issues: []
         F:
             agent_id: F
             verdict: PASS
-            issues: []
         G:
             agent_id: G
             verdict: PASS
-            issues: []
-    summary: >-
-        All 2 errors and 3 warnings from initial critic review resolved by
-        Orchestrator. Agent A ListOperations contradiction removed (direct gRPC call
-        approach only). Agent D non-variadic signatures corrected to variadic so cmd
-        main call sites compile unchanged. Interface contracts updated to match.
-        Agent D stale scaffold instruction removed. Agent B advisory warnings noted.
-    reviewed_at: 2026-04-02T00:00:00Z
+    summary: All 2 errors and 3 warnings from initial critic review resolved by Orchestrator. Agent A ListOperations contradiction removed (direct gRPC call approach only). Agent D non-variadic signatures corrected to variadic so cmd main call sites compile unchanged. Interface contracts updated to match. Agent D stale scaffold instruction removed. Agent B advisory warnings noted.
+    reviewed_at: "2026-04-02T00:00:00Z"
     issue_count: 0
 injection_method: hook
