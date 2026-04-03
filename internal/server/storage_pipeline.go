@@ -3,15 +3,12 @@ package server
 import (
 	"context"
 	"fmt"
-	"math/rand"
 	"sort"
-	"strconv"
 	"strings"
 
 	eventarcpb "cloud.google.com/go/eventarc/apiv1/eventarcpb"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
-	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/fieldmaskpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
@@ -33,10 +30,10 @@ func (s *Storage) CreatePipeline(ctx context.Context, parent, pipelineID string,
 	}
 
 	now := timestamppb.Now()
-	uid := fmt.Sprintf("%x", rand.Uint64())
-	etag := fmt.Sprintf("%x", rand.Uint64())
+	uid := newUID()
+	etag := newEtag()
 
-	stored := clonePipeline(pl)
+	stored := cloneProto(pl)
 	stored.Name = name
 	stored.Uid = uid
 	stored.CreateTime = now
@@ -44,7 +41,7 @@ func (s *Storage) CreatePipeline(ctx context.Context, parent, pipelineID string,
 	stored.Etag = etag
 
 	s.pipelines[name] = stored
-	return clonePipeline(stored), nil
+	return cloneProto(stored), nil
 }
 
 // GetPipeline returns the pipeline with the given full resource name.
@@ -57,7 +54,7 @@ func (s *Storage) GetPipeline(ctx context.Context, name string) (*eventarcpb.Pip
 	if !exists {
 		return nil, status.Errorf(codes.NotFound, "Pipeline [%s] not found", name)
 	}
-	return clonePipeline(stored), nil
+	return cloneProto(stored), nil
 }
 
 // UpdatePipeline applies the fields specified in mask to the stored pipeline
@@ -110,8 +107,8 @@ func (s *Storage) UpdatePipeline(ctx context.Context, pl *eventarcpb.Pipeline, m
 	}
 
 	stored.UpdateTime = timestamppb.Now()
-	stored.Etag = fmt.Sprintf("%x", rand.Uint64())
-	return clonePipeline(stored), nil
+	stored.Etag = newEtag()
+	return cloneProto(stored), nil
 }
 
 // DeletePipeline removes the pipeline with the given full resource name.
@@ -137,7 +134,7 @@ func (s *Storage) ListPipelines(ctx context.Context, parent string, pageSize int
 	var all []*eventarcpb.Pipeline
 	for name, pl := range s.pipelines {
 		if strings.HasPrefix(name, prefix) {
-			all = append(all, clonePipeline(pl))
+			all = append(all, cloneProto(pl))
 		}
 	}
 
@@ -145,31 +142,11 @@ func (s *Storage) ListPipelines(ctx context.Context, parent string, pageSize int
 		return all[i].GetName() < all[j].GetName()
 	})
 
-	startIdx := 0
-	if pageToken != "" {
-		if n, err := strconv.Atoi(pageToken); err == nil {
-			startIdx = n
-		}
+	page, nextToken, err := PaginatePage(all, pageToken, pageSize)
+	if err != nil {
+		return nil, "", err
 	}
-	if pageSize <= 0 {
-		pageSize = 100
-	}
-
-	endIdx := startIdx + int(pageSize)
-	if endIdx > len(all) {
-		endIdx = len(all)
-	}
-
-	var results []*eventarcpb.Pipeline
-	if startIdx < len(all) {
-		results = all[startIdx:endIdx]
-	}
-
-	nextToken := ""
-	if endIdx < len(all) {
-		nextToken = strconv.Itoa(endIdx)
-	}
-	return results, nextToken, nil
+	return page, nextToken, nil
 }
 
 // -------------------------------------------------------------------------
@@ -189,10 +166,10 @@ func (s *Storage) CreateGoogleApiSource(ctx context.Context, parent, sourceID st
 	}
 
 	now := timestamppb.Now()
-	uid := fmt.Sprintf("%x", rand.Uint64())
-	etag := fmt.Sprintf("%x", rand.Uint64())
+	uid := newUID()
+	etag := newEtag()
 
-	stored := cloneGoogleApiSource(src)
+	stored := cloneProto(src)
 	stored.Name = name
 	stored.Uid = uid
 	stored.CreateTime = now
@@ -200,7 +177,7 @@ func (s *Storage) CreateGoogleApiSource(ctx context.Context, parent, sourceID st
 	stored.Etag = etag
 
 	s.googleApiSources[name] = stored
-	return cloneGoogleApiSource(stored), nil
+	return cloneProto(stored), nil
 }
 
 // GetGoogleApiSource returns the source with the given full resource name.
@@ -213,7 +190,7 @@ func (s *Storage) GetGoogleApiSource(ctx context.Context, name string) (*eventar
 	if !exists {
 		return nil, status.Errorf(codes.NotFound, "GoogleApiSource [%s] not found", name)
 	}
-	return cloneGoogleApiSource(stored), nil
+	return cloneProto(stored), nil
 }
 
 // UpdateGoogleApiSource applies the fields specified in mask to the stored
@@ -257,8 +234,8 @@ func (s *Storage) UpdateGoogleApiSource(ctx context.Context, src *eventarcpb.Goo
 	}
 
 	stored.UpdateTime = timestamppb.Now()
-	stored.Etag = fmt.Sprintf("%x", rand.Uint64())
-	return cloneGoogleApiSource(stored), nil
+	stored.Etag = newEtag()
+	return cloneProto(stored), nil
 }
 
 // DeleteGoogleApiSource removes the source with the given full resource name.
@@ -284,7 +261,7 @@ func (s *Storage) ListGoogleApiSources(ctx context.Context, parent string, pageS
 	var all []*eventarcpb.GoogleApiSource
 	for name, src := range s.googleApiSources {
 		if strings.HasPrefix(name, prefix) {
-			all = append(all, cloneGoogleApiSource(src))
+			all = append(all, cloneProto(src))
 		}
 	}
 
@@ -292,49 +269,9 @@ func (s *Storage) ListGoogleApiSources(ctx context.Context, parent string, pageS
 		return all[i].GetName() < all[j].GetName()
 	})
 
-	startIdx := 0
-	if pageToken != "" {
-		if n, err := strconv.Atoi(pageToken); err == nil {
-			startIdx = n
-		}
+	page, nextToken, err := PaginatePage(all, pageToken, pageSize)
+	if err != nil {
+		return nil, "", err
 	}
-	if pageSize <= 0 {
-		pageSize = 100
-	}
-
-	endIdx := startIdx + int(pageSize)
-	if endIdx > len(all) {
-		endIdx = len(all)
-	}
-
-	var results []*eventarcpb.GoogleApiSource
-	if startIdx < len(all) {
-		results = all[startIdx:endIdx]
-	}
-
-	nextToken := ""
-	if endIdx < len(all) {
-		nextToken = strconv.Itoa(endIdx)
-	}
-	return results, nextToken, nil
-}
-
-// -------------------------------------------------------------------------
-// Internal helpers
-// -------------------------------------------------------------------------
-
-// clonePipeline returns a deep copy of the pipeline proto using proto.Clone.
-func clonePipeline(pl *eventarcpb.Pipeline) *eventarcpb.Pipeline {
-	if pl == nil {
-		return nil
-	}
-	return proto.Clone(pl).(*eventarcpb.Pipeline)
-}
-
-// cloneGoogleApiSource returns a deep copy of the source proto using proto.Clone.
-func cloneGoogleApiSource(src *eventarcpb.GoogleApiSource) *eventarcpb.GoogleApiSource {
-	if src == nil {
-		return nil
-	}
-	return proto.Clone(src).(*eventarcpb.GoogleApiSource)
+	return page, nextToken, nil
 }
