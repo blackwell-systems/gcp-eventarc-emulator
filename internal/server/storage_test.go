@@ -200,6 +200,26 @@ func TestStorageListProviders_ReturnsDefaults(t *testing.T) {
 	}
 }
 
+// TestProviderEventTypes_NotEmpty verifies that every default provider has at
+// least one event type populated after NewStorage.
+func TestProviderEventTypes_NotEmpty(t *testing.T) {
+	s := NewStorage()
+	ctx := context.Background()
+
+	providers, _, err := s.ListProviders(ctx, testParent, 0, "", "", "")
+	if err != nil {
+		t.Fatalf("ListProviders: %v", err)
+	}
+	if len(providers) == 0 {
+		t.Fatal("expected at least one provider, got none")
+	}
+	for _, p := range providers {
+		if len(p.GetEventTypes()) == 0 {
+			t.Errorf("provider %q has no event types", p.GetName())
+		}
+	}
+}
+
 // startsWith is a helper that avoids importing strings in the test file.
 func startsWith(s, prefix string) bool {
 	return len(s) >= len(prefix) && s[:len(prefix)] == prefix

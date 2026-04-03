@@ -241,6 +241,69 @@ func TestStorageGetGoogleChannelConfig_Default(t *testing.T) {
 	}
 }
 
+// TestCreateChannel_StateIsActive verifies that a newly created channel has
+// its State field set to ACTIVE.
+func TestCreateChannel_StateIsActive(t *testing.T) {
+	s := newTestStorage(t)
+	ctx := context.Background()
+
+	ch := &eventarcpb.Channel{}
+	got, err := s.CreateChannel(ctx, testParent, "state-test-channel", ch)
+	if err != nil {
+		t.Fatalf("CreateChannel: unexpected error: %v", err)
+	}
+	if got.GetState() != eventarcpb.Channel_ACTIVE {
+		t.Errorf("State = %v, want ACTIVE", got.GetState())
+	}
+}
+
+// TestGetGoogleChannelConfig_DefaultHasUpdateTime verifies that getting a config
+// that has never been stored returns a non-nil UpdateTime.
+func TestGetGoogleChannelConfig_DefaultHasUpdateTime(t *testing.T) {
+	s := newTestStorage(t)
+	ctx := context.Background()
+
+	name := testParent + "/googleChannelConfig"
+	got, err := s.GetGoogleChannelConfig(ctx, name)
+	if err != nil {
+		t.Fatalf("GetGoogleChannelConfig: unexpected error: %v", err)
+	}
+	if got.GetUpdateTime() == nil {
+		t.Error("UpdateTime should not be nil for default config")
+	}
+}
+
+// TestGetChannelExists verifies that GetChannelExists returns true for a stored
+// channel and false for a channel that does not exist.
+func TestGetChannelExists(t *testing.T) {
+	s := newTestStorage(t)
+	ctx := context.Background()
+
+	// Channel that does not exist yet.
+	name := testParent + "/channels/existence-test"
+	exists, err := s.GetChannelExists(ctx, name)
+	if err != nil {
+		t.Fatalf("GetChannelExists (missing): unexpected error: %v", err)
+	}
+	if exists {
+		t.Error("GetChannelExists = true for non-existent channel, want false")
+	}
+
+	// Create the channel.
+	if _, err := s.CreateChannel(ctx, testParent, "existence-test", &eventarcpb.Channel{}); err != nil {
+		t.Fatalf("CreateChannel: unexpected error: %v", err)
+	}
+
+	// Channel should now exist.
+	exists, err = s.GetChannelExists(ctx, name)
+	if err != nil {
+		t.Fatalf("GetChannelExists (present): unexpected error: %v", err)
+	}
+	if !exists {
+		t.Error("GetChannelExists = false for existing channel, want true")
+	}
+}
+
 // TestStorageUpdateGoogleChannelConfig_Success verifies that updating a config
 // sets UpdateTime and applies specified fields.
 func TestStorageUpdateGoogleChannelConfig_Success(t *testing.T) {

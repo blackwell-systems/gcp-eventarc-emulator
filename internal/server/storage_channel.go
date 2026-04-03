@@ -41,6 +41,7 @@ func (s *Storage) CreateChannel(ctx context.Context, parent, channelID string, c
 	stored.Uid = uid
 	stored.CreateTime = now
 	stored.UpdateTime = now
+	stored.State = eventarcpb.Channel_ACTIVE
 
 	s.channels[name] = stored
 	return cloneChannel(stored), nil
@@ -57,6 +58,16 @@ func (s *Storage) GetChannel(ctx context.Context, name string) (*eventarcpb.Chan
 		return nil, status.Errorf(codes.NotFound, "Channel [%s] not found", name)
 	}
 	return cloneChannel(stored), nil
+}
+
+// GetChannelExists reports whether a channel with the given full resource
+// name exists in storage. Used by the publisher to validate channels
+// before routing events.
+func (s *Storage) GetChannelExists(ctx context.Context, name string) (bool, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	_, ok := s.channels[name]
+	return ok, nil
 }
 
 // UpdateChannel applies the fields specified in mask to the stored channel and
@@ -262,7 +273,10 @@ func (s *Storage) GetGoogleChannelConfig(ctx context.Context, name string) (*eve
 	if stored, exists := s.googleChannelConfigs[name]; exists {
 		return cloneGoogleChannelConfig(stored), nil
 	}
-	return &eventarcpb.GoogleChannelConfig{Name: name}, nil
+	return &eventarcpb.GoogleChannelConfig{
+		Name:       name,
+		UpdateTime: timestamppb.Now(),
+	}, nil
 }
 
 // UpdateGoogleChannelConfig applies the fields specified in mask to the stored
