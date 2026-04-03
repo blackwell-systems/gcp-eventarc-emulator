@@ -1,6 +1,6 @@
-// Package integration provides end-to-end integration tests for the
-// GCP Eventarc emulator using an in-process bufconn transport.
-package integration_test
+// Tests in this file are end-to-end integration tests for the GCP Eventarc
+// emulator using an in-process bufconn transport.
+package gcp_eventarc_emulator_test
 
 import (
 	"context"

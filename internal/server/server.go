@@ -1,14 +1,17 @@
-// Package server implements a gRPC emulator for Google Cloud Eventarc API.
+// Package server implements the GCP Eventarc v1 gRPC API as a local emulator.
 //
-// This package provides a complete mock implementation of the Eventarc v1 API
-// for local development and testing. It implements the EventarcServer interface
-// with in-memory storage, eliminating the need for GCP credentials or network access.
+// It provides a complete in-memory implementation of all 47 Eventarc RPCs across
+// 8 resource types (Trigger, Channel, ChannelConnection, GoogleChannelConfig,
+// MessageBus, Enrollment, Pipeline, GoogleApiSource) plus the Provider read API,
+// the Publishing service, and the Operations service for LRO polling.
 //
-// The server supports Trigger CRUD (returning LROs) and read-only Provider access.
-// All operations are thread-safe (Storage is guarded by sync.RWMutex internally).
+// All mutating RPCs return a google.longrunning.Operation resolved immediately
+// (Done: true). Storage is thread-safe via sync.RWMutex; all returned proto
+// messages are deep-copied with proto.Clone to prevent aliasing.
 //
-// For standalone usage, see cmd/server. For embedded testing, import this package
-// directly and create a server with NewServer().
+// For standalone use, see cmd/server, cmd/server-rest, or cmd/server-dual.
+// For in-process testing, create a server with NewServer() and register it
+// on a bufconn listener — see integration_test.go for a complete example.
 package server
 
 import (

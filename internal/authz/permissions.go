@@ -1,3 +1,9 @@
+// Package authz maps Eventarc RPC methods to their GCP IAM permission strings.
+//
+// GetPermission returns the PermissionCheck for a given RPC name (e.g.
+// "GetTrigger" → "eventarc.triggers.get"). All 39 Eventarc IAM permissions
+// are registered. NormalizeParentForCreate strips trailing slashes from
+// parent resource names before IAM checks.
 package authz
 
 import "strings"

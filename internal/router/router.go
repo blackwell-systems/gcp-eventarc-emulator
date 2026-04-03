@@ -1,3 +1,11 @@
+// Package router matches published CloudEvents against stored Eventarc triggers.
+//
+// For each incoming event, the router evaluates every trigger's event_filters
+// (exact-match and match-path-pattern operators) and optional CEL condition
+// expression. Triggers that match are returned as candidates for dispatch.
+//
+// CEL condition evaluation uses cel-go. Conditions are compiled and cached on
+// first use so repeated publishes to the same trigger incur no recompilation cost.
 package router
 
 import (
