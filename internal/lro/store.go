@@ -14,12 +14,14 @@ import (
 	"strings"
 	"sync"
 
+	eventarcpb "cloud.google.com/go/eventarc/apiv1/eventarcpb"
 	longrunningpb "cloud.google.com/go/longrunning/autogen/longrunningpb"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/anypb"
 	"google.golang.org/protobuf/types/known/emptypb"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 // Store manages long-running operations and implements OperationsServer.
@@ -38,13 +40,28 @@ func NewStore() *Store {
 	}
 }
 
-// CreateDone creates a pre-resolved operation with the given resource as
-// response. The operation name is formatted as:
+// CreateDone creates a pre-resolved operation wrapping resource as response,
+// with OperationMetadata populated.
+//
+// verb is the operation verb: "create", "update", or "delete".
+// target is the full resource name (e.g. "projects/p/locations/l/triggers/t").
+//
+// The Operation.metadata field is packed as anypb.Any wrapping:
+//
+//	eventarcpb.OperationMetadata{
+//	  CreateTime: <now>,
+//	  EndTime:    <now>,
+//	  Target:     target,
+//	  Verb:       verb,
+//	  ApiVersion: "v1",
+//	}
+//
+// The operation name is formatted as:
 //
 //	{parent}/operations/{uuid}
 //
 // where uuid is a random hex string for traceability.
-func (s *Store) CreateDone(parent string, resource proto.Message) (*longrunningpb.Operation, error) {
+func (s *Store) CreateDone(parent string, resource proto.Message, verb string, target string) (*longrunningpb.Operation, error) {
 	uuid, err := randomHex(16)
 	if err != nil {
 		return nil, fmt.Errorf("lro: generate uuid: %w", err)
@@ -57,9 +74,23 @@ func (s *Store) CreateDone(parent string, resource proto.Message) (*longrunningp
 		return nil, fmt.Errorf("lro: pack resource into anypb: %w", err)
 	}
 
+	now := timestamppb.Now()
+	meta := &eventarcpb.OperationMetadata{
+		CreateTime: now,
+		EndTime:    now,
+		Target:     target,
+		Verb:       verb,
+		ApiVersion: "v1",
+	}
+	metaAny, err := anypb.New(meta)
+	if err != nil {
+		return nil, fmt.Errorf("lro: pack metadata into anypb: %w", err)
+	}
+
 	op := &longrunningpb.Operation{
-		Name: name,
-		Done: true,
+		Name:     name,
+		Done:     true,
+		Metadata: metaAny,
 		Result: &longrunningpb.Operation_Response{
 			Response: anyVal,
 		},
