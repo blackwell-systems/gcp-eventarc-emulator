@@ -12,6 +12,7 @@
 //
 //	EVENTARC_HTTP_PORT  - HTTP port to listen on (default: 8085)
 //	GCP_MOCK_LOG_LEVEL  - Log level: debug, info, warn, error (default: info)
+//	IAM_MODE            - IAM enforcement: off, permissive, strict (default: off)
 package main
 
 import (
@@ -39,13 +40,46 @@ var (
 	version  = "0.1.0"
 )
 
+// validateLogLevel returns an error if the log level is not one of the
+// accepted values.
+func validateLogLevel(level string) error {
+	switch level {
+	case "debug", "info", "warn", "error":
+		return nil
+	default:
+		return fmt.Errorf("invalid --log-level %q: must be one of: debug, info, warn, error", level)
+	}
+}
+
 func main() {
+	flag.Usage = func() {
+		fmt.Fprintf(os.Stderr, "GCP Eventarc Emulator v%s — REST-only server\n\n", version)
+		fmt.Fprintf(os.Stderr, "Usage: server-rest [flags]\n\nFlags:\n")
+		flag.PrintDefaults()
+		fmt.Fprintf(os.Stderr, "\nEnvironment Variables:\n")
+		fmt.Fprintf(os.Stderr, "  EVENTARC_HTTP_PORT      HTTP port (default: 8085)\n")
+		fmt.Fprintf(os.Stderr, "  GCP_MOCK_LOG_LEVEL      Log level: debug, info, warn, error (default: info)\n")
+		fmt.Fprintf(os.Stderr, "  IAM_MODE                IAM enforcement: off, permissive, strict (default: off)\n")
+	}
+
+	showVersion := flag.Bool("version", false, "Print version and exit")
+
 	flag.Parse()
 
+	if *showVersion {
+		fmt.Printf("GCP Eventarc Emulator v%s\n", version)
+		os.Exit(0)
+	}
+
+	if err := validateLogLevel(*logLevel); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+
 	log.Printf("GCP Eventarc Emulator v%s (REST)", version)
+	log.Printf("Log level: %s", *logLevel)
 	log.Printf("Starting gRPC backend on internal port %d", *grpcPort)
 	log.Printf("Starting HTTP gateway on port %d", *httpPort)
-	log.Printf("Log level: %s", *logLevel)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -62,6 +96,8 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to create server: %v", err)
 	}
+
+	log.Printf("IAM mode: %s", srv.IAMMode())
 
 	// Wire up router and dispatcher
 	rtr := router.NewRouter(srv.Storage())
@@ -82,6 +118,9 @@ func main() {
 	}()
 
 	// Start REST gateway proxying to the internal gRPC server
+	// TODO(audit-fixes #12): grpc-gateway returns raw Go JSON parse errors for
+	// malformed request bodies. Add a custom runtime.WithErrorHandler to gateway.New()
+	// to intercept JSON parse errors and return "request body is not valid JSON".
 	gw, err := gateway.New(grpcAddr)
 	if err != nil {
 		log.Fatalf("Failed to create REST gateway: %v", err)
