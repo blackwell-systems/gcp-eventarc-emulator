@@ -20,8 +20,10 @@ import (
 	longrunningpb "cloud.google.com/go/longrunning/autogen/longrunningpb"
 	emulatorauth "github.com/blackwell-systems/gcp-emulator-auth"
 	"github.com/blackwell-systems/gcp-eventarc-emulator/internal/lro"
+	"google.golang.org/genproto/googleapis/rpc/errdetails"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/emptypb"
 )
 
 // Server implements the EventarcServer interface.
@@ -91,6 +93,12 @@ func (s *Server) checkPermission(ctx context.Context, permission string, resourc
 	}
 
 	principal := emulatorauth.ExtractPrincipalFromContext(ctx)
+
+	// Permissive mode: no principal → deny (matches documented behavior table).
+	if principal == "" && string(s.iamMode) == "permissive" {
+		return status.Errorf(codes.PermissionDenied,
+			"permissive mode requires authentication: no principal in request")
+	}
 
 	allowed, err := s.iamClient.CheckPermission(ctx, principal, resource, permission)
 	if err != nil {
@@ -191,20 +199,29 @@ func (s *Server) ListTriggers(ctx context.Context, req *eventarcpb.ListTriggersR
 
 // CreateTrigger creates a new trigger and returns a completed LRO.
 func (s *Server) CreateTrigger(ctx context.Context, req *eventarcpb.CreateTriggerRequest) (*longrunningpb.Operation, error) {
+	var violations []*errdetails.BadRequest_FieldViolation
 	if req.GetParent() == "" {
-		return nil, status.Error(codes.InvalidArgument, "parent is required")
+		violations = append(violations, &errdetails.BadRequest_FieldViolation{Field: "parent", Description: "parent is required"})
 	}
 	if req.GetTriggerId() == "" {
-		return nil, status.Error(codes.InvalidArgument, "trigger_id is required")
+		violations = append(violations, &errdetails.BadRequest_FieldViolation{Field: "triggerId", Description: "triggerId is required"})
 	}
 	if req.GetTrigger() == nil {
-		return nil, status.Error(codes.InvalidArgument, "trigger is required")
+		violations = append(violations, &errdetails.BadRequest_FieldViolation{Field: "trigger", Description: "trigger is required"})
+	} else {
+		if req.GetTrigger().GetDestination() == nil {
+			violations = append(violations, &errdetails.BadRequest_FieldViolation{Field: "trigger.destination", Description: "trigger.destination is required"})
+		}
+		if len(req.GetTrigger().GetEventFilters()) == 0 {
+			violations = append(violations, &errdetails.BadRequest_FieldViolation{Field: "trigger.eventFilters", Description: "trigger.event_filters must not be empty"})
+		}
 	}
-	if req.GetTrigger().GetDestination() == nil {
-		return nil, status.Error(codes.InvalidArgument, "trigger.destination is required")
-	}
-	if len(req.GetTrigger().GetEventFilters()) == 0 {
-		return nil, status.Error(codes.InvalidArgument, "trigger.event_filters must not be empty: at least one event filter is required")
+	if len(violations) > 0 {
+		st := status.New(codes.InvalidArgument, violations[0].Description)
+		if br, err := st.WithDetails(&errdetails.BadRequest{FieldViolations: violations}); err == nil {
+			return nil, br.Err()
+		}
+		return nil, st.Err()
 	}
 
 	if err := s.checkPermission(ctx, "eventarc.triggers.create", req.GetParent()); err != nil {
@@ -251,7 +268,7 @@ func (s *Server) DeleteTrigger(ctx context.Context, req *eventarcpb.DeleteTrigge
 		return nil, err
 	}
 
-	trigger, err := s.storage.GetTrigger(ctx, req.GetName())
+	_, err := s.storage.GetTrigger(ctx, req.GetName())
 	if err != nil {
 		return nil, err
 	}
@@ -259,7 +276,7 @@ func (s *Server) DeleteTrigger(ctx context.Context, req *eventarcpb.DeleteTrigge
 		return nil, err
 	}
 
-	return s.lro.CreateDone(parent, trigger)
+	return s.lro.CreateDone(parent, &emptypb.Empty{})
 }
 
 // -------------------------------------------------------------------------
@@ -386,14 +403,14 @@ func (s *Server) DeleteChannel(ctx context.Context, req *eventarcpb.DeleteChanne
 	if err := s.checkPermission(ctx, "eventarc.channels.delete", req.GetName()); err != nil {
 		return nil, err
 	}
-	channel, err := s.storage.GetChannel(ctx, req.GetName())
+	_, err := s.storage.GetChannel(ctx, req.GetName())
 	if err != nil {
 		return nil, err
 	}
 	if err := s.storage.DeleteChannel(ctx, req.GetName()); err != nil {
 		return nil, err
 	}
-	return s.lro.CreateDone(parent, channel)
+	return s.lro.CreateDone(parent, &emptypb.Empty{})
 }
 
 // -------------------------------------------------------------------------
@@ -459,14 +476,14 @@ func (s *Server) DeleteChannelConnection(ctx context.Context, req *eventarcpb.De
 	if err := s.checkPermission(ctx, "eventarc.channelConnections.delete", req.GetName()); err != nil {
 		return nil, err
 	}
-	conn, err := s.storage.GetChannelConnection(ctx, req.GetName())
+	_, err := s.storage.GetChannelConnection(ctx, req.GetName())
 	if err != nil {
 		return nil, err
 	}
 	if err := s.storage.DeleteChannelConnection(ctx, req.GetName()); err != nil {
 		return nil, err
 	}
-	return s.lro.CreateDone(parent, conn)
+	return s.lro.CreateDone(parent, &emptypb.Empty{})
 }
 
 // -------------------------------------------------------------------------
@@ -592,14 +609,14 @@ func (s *Server) DeleteMessageBus(ctx context.Context, req *eventarcpb.DeleteMes
 	if err := s.checkPermission(ctx, "eventarc.messageBuses.delete", req.GetName()); err != nil {
 		return nil, err
 	}
-	bus, err := s.storage.GetMessageBus(ctx, req.GetName())
+	_, err := s.storage.GetMessageBus(ctx, req.GetName())
 	if err != nil {
 		return nil, err
 	}
 	if err := s.storage.DeleteMessageBus(ctx, req.GetName()); err != nil {
 		return nil, err
 	}
-	return s.lro.CreateDone(parent, bus)
+	return s.lro.CreateDone(parent, &emptypb.Empty{})
 }
 
 // -------------------------------------------------------------------------
@@ -681,14 +698,14 @@ func (s *Server) DeleteEnrollment(ctx context.Context, req *eventarcpb.DeleteEnr
 	if err := s.checkPermission(ctx, "eventarc.enrollments.delete", req.GetName()); err != nil {
 		return nil, err
 	}
-	enrollment, err := s.storage.GetEnrollment(ctx, req.GetName())
+	_, err := s.storage.GetEnrollment(ctx, req.GetName())
 	if err != nil {
 		return nil, err
 	}
 	if err := s.storage.DeleteEnrollment(ctx, req.GetName()); err != nil {
 		return nil, err
 	}
-	return s.lro.CreateDone(parent, enrollment)
+	return s.lro.CreateDone(parent, &emptypb.Empty{})
 }
 
 // -------------------------------------------------------------------------
@@ -770,14 +787,14 @@ func (s *Server) DeletePipeline(ctx context.Context, req *eventarcpb.DeletePipel
 	if err := s.checkPermission(ctx, "eventarc.pipelines.delete", req.GetName()); err != nil {
 		return nil, err
 	}
-	pipeline, err := s.storage.GetPipeline(ctx, req.GetName())
+	_, err := s.storage.GetPipeline(ctx, req.GetName())
 	if err != nil {
 		return nil, err
 	}
 	if err := s.storage.DeletePipeline(ctx, req.GetName()); err != nil {
 		return nil, err
 	}
-	return s.lro.CreateDone(parent, pipeline)
+	return s.lro.CreateDone(parent, &emptypb.Empty{})
 }
 
 // -------------------------------------------------------------------------
@@ -859,12 +876,12 @@ func (s *Server) DeleteGoogleApiSource(ctx context.Context, req *eventarcpb.Dele
 	if err := s.checkPermission(ctx, "eventarc.googleApiSources.delete", req.GetName()); err != nil {
 		return nil, err
 	}
-	src, err := s.storage.GetGoogleApiSource(ctx, req.GetName())
+	_, err := s.storage.GetGoogleApiSource(ctx, req.GetName())
 	if err != nil {
 		return nil, err
 	}
 	if err := s.storage.DeleteGoogleApiSource(ctx, req.GetName()); err != nil {
 		return nil, err
 	}
-	return s.lro.CreateDone(parent, src)
+	return s.lro.CreateDone(parent, &emptypb.Empty{})
 }
