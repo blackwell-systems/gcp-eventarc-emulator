@@ -3,12 +3,13 @@ package router
 import (
 	"context"
 	"fmt"
-	"log"
 
 	"github.com/google/cel-go/cel"
 
 	eventarcpb "cloud.google.com/go/eventarc/apiv1/eventarcpb"
 	cloudevents "github.com/cloudevents/sdk-go/v2"
+
+	"github.com/blackwell-systems/gcp-eventarc-emulator/internal/logger"
 )
 
 // StorageReader is the subset of *server.Storage needed by the router.
@@ -20,11 +21,19 @@ type StorageReader interface {
 // Router matches CloudEvents against Eventarc triggers.
 type Router struct {
 	storage StorageReader
+	logger  *logger.Logger
 }
 
 // NewRouter creates a new Router backed by the given StorageReader.
-func NewRouter(storage StorageReader) *Router {
-	return &Router{storage: storage}
+// An optional *logger.Logger may be supplied; if omitted or nil, defaults to info level.
+func NewRouter(storage StorageReader, log ...*logger.Logger) *Router {
+	r := &Router{storage: storage}
+	if len(log) > 0 && log[0] != nil {
+		r.logger = log[0]
+	} else {
+		r.logger = logger.New("info")
+	}
+	return r
 }
 
 // Match returns all triggers in the given project/location whose
@@ -40,12 +49,16 @@ func (r *Router) Match(ctx context.Context, parent string, event cloudevents.Eve
 		return nil, err
 	}
 
+	r.logger.Debug("router: evaluating %d triggers for type=%s", len(triggers), event.Type())
+
 	var matched []*eventarcpb.Trigger
 	for _, t := range triggers {
-		if triggerMatches(t, event) {
+		if triggerMatches(t, event, r.logger) {
 			matched = append(matched, t)
 		}
 	}
+
+	r.logger.Debug("router: matched %d/%d triggers", len(matched), len(triggers))
 	return matched, nil
 }
 
@@ -57,7 +70,7 @@ const conditionLabelKey = "eventarc-emulator/condition"
 // triggerMatches returns true if all of the trigger's event_filters match the event
 // and (if set) the trigger's condition label CEL expression evaluates to true.
 // A trigger with no filters and no condition matches every event.
-func triggerMatches(trigger *eventarcpb.Trigger, event cloudevents.Event) bool {
+func triggerMatches(trigger *eventarcpb.Trigger, event cloudevents.Event, log *logger.Logger) bool {
 	for _, f := range trigger.GetEventFilters() {
 		eventVal := attrValue(event, f.GetAttribute())
 		// Operator "" and "match-path-pattern" both use exact match for now.
@@ -70,13 +83,13 @@ func triggerMatches(trigger *eventarcpb.Trigger, event cloudevents.Event) bool {
 	if condition == "" {
 		return true
 	}
-	return evalCELCondition(condition, event)
+	return evalCELCondition(condition, event, log)
 }
 
 // evalCELCondition evaluates a CEL expression against a CloudEvent's attributes.
 // The environment exposes: type, source, subject, id (all strings), plus every
 // extension attribute as a string. Returns false on any compilation or runtime error.
-func evalCELCondition(condition string, event cloudevents.Event) bool {
+func evalCELCondition(condition string, event cloudevents.Event, log *logger.Logger) bool {
 	// Build the CEL variable declarations from known attributes + extensions.
 	attrs := eventAttrsAsStrings(event)
 
@@ -88,19 +101,19 @@ func evalCELCondition(condition string, event cloudevents.Event) bool {
 
 	env, err := cel.NewEnv(vars...)
 	if err != nil {
-		log.Printf("router: CEL env creation failed for condition %q: %v", condition, err)
+		log.Warn("router: CEL env creation failed for condition %q: %v", condition, err)
 		return false
 	}
 
 	ast, issues := env.Compile(condition)
 	if issues != nil && issues.Err() != nil {
-		log.Printf("router: CEL compile error for condition %q: %v", condition, issues.Err())
+		log.Warn("router: CEL compile error for condition %q: %v", condition, issues.Err())
 		return false
 	}
 
 	prg, err := env.Program(ast)
 	if err != nil {
-		log.Printf("router: CEL program creation failed for condition %q: %v", condition, err)
+		log.Warn("router: CEL program creation failed for condition %q: %v", condition, err)
 		return false
 	}
 
@@ -112,13 +125,13 @@ func evalCELCondition(condition string, event cloudevents.Event) bool {
 
 	out, _, err := prg.Eval(activation)
 	if err != nil {
-		log.Printf("router: CEL eval error for condition %q: %v", condition, err)
+		log.Warn("router: CEL eval error for condition %q: %v", condition, err)
 		return false
 	}
 
 	result, ok := out.Value().(bool)
 	if !ok {
-		log.Printf("router: CEL condition %q did not return a bool", condition)
+		log.Warn("router: CEL condition %q did not return a bool", condition)
 		return false
 	}
 	return result
