@@ -19,6 +19,7 @@ import (
 	eventarcpb "cloud.google.com/go/eventarc/apiv1/eventarcpb"
 	longrunningpb "cloud.google.com/go/longrunning/autogen/longrunningpb"
 	emulatorauth "github.com/blackwell-systems/gcp-emulator-auth"
+	"github.com/blackwell-systems/gcp-eventarc-emulator/internal/authz"
 	"github.com/blackwell-systems/gcp-eventarc-emulator/internal/lro"
 	"google.golang.org/genproto/googleapis/rpc/errdetails"
 	"google.golang.org/grpc/codes"
@@ -124,6 +125,26 @@ func (s *Server) checkPermission(ctx context.Context, permission string, resourc
 	return nil
 }
 
+// requireField returns a gRPC InvalidArgument error when value is empty.
+// fieldName is used in the error message, e.g. "name is required".
+func requireField(value, fieldName string) error {
+	if value == "" {
+		return status.Errorf(codes.InvalidArgument, "%s is required", fieldName)
+	}
+	return nil
+}
+
+// perm returns the IAM permission string for the named Eventarc operation.
+// It panics if the operation is not registered in the authz package, which
+// indicates a programming error (missing permission constant).
+func perm(operation string) string {
+	p, ok := authz.GetPermission(operation)
+	if !ok {
+		panic("authz: unknown operation: " + operation)
+	}
+	return p.Permission
+}
+
 // parentFromName extracts the parent resource from a full trigger name.
 // e.g. "projects/p/locations/l/triggers/t" → "projects/p/locations/l"
 func parentFromName(name string) string {
@@ -157,11 +178,11 @@ func parentFromResource(name string) string {
 
 // GetTrigger returns the trigger with the given full resource name.
 func (s *Server) GetTrigger(ctx context.Context, req *eventarcpb.GetTriggerRequest) (*eventarcpb.Trigger, error) {
-	if req.GetName() == "" {
-		return nil, status.Error(codes.InvalidArgument, "name is required")
+	if err := requireField(req.GetName(), "name"); err != nil {
+		return nil, err
 	}
 
-	if err := s.checkPermission(ctx, "eventarc.triggers.get", req.GetName()); err != nil {
+	if err := s.checkPermission(ctx, perm("GetTrigger"), req.GetName()); err != nil {
 		return nil, err
 	}
 
@@ -170,11 +191,11 @@ func (s *Server) GetTrigger(ctx context.Context, req *eventarcpb.GetTriggerReque
 
 // ListTriggers lists triggers under the given parent with optional pagination.
 func (s *Server) ListTriggers(ctx context.Context, req *eventarcpb.ListTriggersRequest) (*eventarcpb.ListTriggersResponse, error) {
-	if req.GetParent() == "" {
-		return nil, status.Error(codes.InvalidArgument, "parent is required")
+	if err := requireField(req.GetParent(), "parent"); err != nil {
+		return nil, err
 	}
 
-	if err := s.checkPermission(ctx, "eventarc.triggers.list", req.GetParent()); err != nil {
+	if err := s.checkPermission(ctx, perm("ListTriggers"), req.GetParent()); err != nil {
 		return nil, err
 	}
 
@@ -223,7 +244,7 @@ func (s *Server) CreateTrigger(ctx context.Context, req *eventarcpb.CreateTrigge
 		return nil, st.Err()
 	}
 
-	if err := s.checkPermission(ctx, "eventarc.triggers.create", req.GetParent()); err != nil {
+	if err := s.checkPermission(ctx, perm("CreateTrigger"), req.GetParent()); err != nil {
 		return nil, err
 	}
 
@@ -237,13 +258,13 @@ func (s *Server) CreateTrigger(ctx context.Context, req *eventarcpb.CreateTrigge
 
 // UpdateTrigger updates an existing trigger and returns a completed LRO.
 func (s *Server) UpdateTrigger(ctx context.Context, req *eventarcpb.UpdateTriggerRequest) (*longrunningpb.Operation, error) {
-	if req.GetTrigger() == nil || req.GetTrigger().GetName() == "" {
-		return nil, status.Error(codes.InvalidArgument, "trigger.name is required")
+	if err := requireField(req.GetTrigger().GetName(), "trigger.name"); err != nil {
+		return nil, err
 	}
 
 	parent := parentFromName(req.GetTrigger().GetName())
 
-	if err := s.checkPermission(ctx, "eventarc.triggers.update", req.GetTrigger().GetName()); err != nil {
+	if err := s.checkPermission(ctx, perm("UpdateTrigger"), req.GetTrigger().GetName()); err != nil {
 		return nil, err
 	}
 
@@ -257,13 +278,13 @@ func (s *Server) UpdateTrigger(ctx context.Context, req *eventarcpb.UpdateTrigge
 
 // DeleteTrigger deletes an existing trigger and returns a completed LRO.
 func (s *Server) DeleteTrigger(ctx context.Context, req *eventarcpb.DeleteTriggerRequest) (*longrunningpb.Operation, error) {
-	if req.GetName() == "" {
-		return nil, status.Error(codes.InvalidArgument, "name is required")
+	if err := requireField(req.GetName(), "name"); err != nil {
+		return nil, err
 	}
 
 	parent := parentFromName(req.GetName())
 
-	if err := s.checkPermission(ctx, "eventarc.triggers.delete", req.GetName()); err != nil {
+	if err := s.checkPermission(ctx, perm("DeleteTrigger"), req.GetName()); err != nil {
 		return nil, err
 	}
 
@@ -284,11 +305,11 @@ func (s *Server) DeleteTrigger(ctx context.Context, req *eventarcpb.DeleteTrigge
 
 // GetProvider returns the provider with the given full resource name.
 func (s *Server) GetProvider(ctx context.Context, req *eventarcpb.GetProviderRequest) (*eventarcpb.Provider, error) {
-	if req.GetName() == "" {
-		return nil, status.Error(codes.InvalidArgument, "name is required")
+	if err := requireField(req.GetName(), "name"); err != nil {
+		return nil, err
 	}
 
-	if err := s.checkPermission(ctx, "eventarc.providers.get", req.GetName()); err != nil {
+	if err := s.checkPermission(ctx, perm("GetProvider"), req.GetName()); err != nil {
 		return nil, err
 	}
 
@@ -297,11 +318,11 @@ func (s *Server) GetProvider(ctx context.Context, req *eventarcpb.GetProviderReq
 
 // ListProviders lists providers under the given parent.
 func (s *Server) ListProviders(ctx context.Context, req *eventarcpb.ListProvidersRequest) (*eventarcpb.ListProvidersResponse, error) {
-	if req.GetParent() == "" {
-		return nil, status.Error(codes.InvalidArgument, "parent is required")
+	if err := requireField(req.GetParent(), "parent"); err != nil {
+		return nil, err
 	}
 
-	if err := s.checkPermission(ctx, "eventarc.providers.list", req.GetParent()); err != nil {
+	if err := s.checkPermission(ctx, perm("ListProviders"), req.GetParent()); err != nil {
 		return nil, err
 	}
 
@@ -329,10 +350,10 @@ func (s *Server) ListProviders(ctx context.Context, req *eventarcpb.ListProvider
 
 // GetChannel returns the channel with the given full resource name.
 func (s *Server) GetChannel(ctx context.Context, req *eventarcpb.GetChannelRequest) (*eventarcpb.Channel, error) {
-	if req.GetName() == "" {
-		return nil, status.Error(codes.InvalidArgument, "name is required")
+	if err := requireField(req.GetName(), "name"); err != nil {
+		return nil, err
 	}
-	if err := s.checkPermission(ctx, "eventarc.channels.get", req.GetName()); err != nil {
+	if err := s.checkPermission(ctx, perm("GetChannel"), req.GetName()); err != nil {
 		return nil, err
 	}
 	return s.storage.GetChannel(ctx, req.GetName())
@@ -340,10 +361,10 @@ func (s *Server) GetChannel(ctx context.Context, req *eventarcpb.GetChannelReque
 
 // ListChannels lists channels under the given parent.
 func (s *Server) ListChannels(ctx context.Context, req *eventarcpb.ListChannelsRequest) (*eventarcpb.ListChannelsResponse, error) {
-	if req.GetParent() == "" {
-		return nil, status.Error(codes.InvalidArgument, "parent is required")
+	if err := requireField(req.GetParent(), "parent"); err != nil {
+		return nil, err
 	}
-	if err := s.checkPermission(ctx, "eventarc.channels.list", req.GetParent()); err != nil {
+	if err := s.checkPermission(ctx, perm("ListChannels"), req.GetParent()); err != nil {
 		return nil, err
 	}
 	channels, nextToken, err := s.storage.ListChannels(ctx, req.GetParent(), req.GetPageSize(), req.GetPageToken())
@@ -358,16 +379,16 @@ func (s *Server) ListChannels(ctx context.Context, req *eventarcpb.ListChannelsR
 
 // CreateChannel creates a new channel and returns a completed LRO.
 func (s *Server) CreateChannel(ctx context.Context, req *eventarcpb.CreateChannelRequest) (*longrunningpb.Operation, error) {
-	if req.GetParent() == "" {
-		return nil, status.Error(codes.InvalidArgument, "parent is required")
+	if err := requireField(req.GetParent(), "parent"); err != nil {
+		return nil, err
 	}
-	if req.GetChannelId() == "" {
-		return nil, status.Error(codes.InvalidArgument, "channel_id is required")
+	if err := requireField(req.GetChannelId(), "channel_id"); err != nil {
+		return nil, err
 	}
 	if req.GetChannel() == nil {
 		return nil, status.Error(codes.InvalidArgument, "channel is required")
 	}
-	if err := s.checkPermission(ctx, "eventarc.channels.create", req.GetParent()); err != nil {
+	if err := s.checkPermission(ctx, perm("CreateChannel"), req.GetParent()); err != nil {
 		return nil, err
 	}
 	channel, err := s.storage.CreateChannel(ctx, req.GetParent(), req.GetChannelId(), req.GetChannel())
@@ -379,11 +400,11 @@ func (s *Server) CreateChannel(ctx context.Context, req *eventarcpb.CreateChanne
 
 // UpdateChannel updates an existing channel and returns a completed LRO.
 func (s *Server) UpdateChannel(ctx context.Context, req *eventarcpb.UpdateChannelRequest) (*longrunningpb.Operation, error) {
-	if req.GetChannel() == nil || req.GetChannel().GetName() == "" {
-		return nil, status.Error(codes.InvalidArgument, "channel.name is required")
+	if err := requireField(req.GetChannel().GetName(), "channel.name"); err != nil {
+		return nil, err
 	}
 	parent := parentFromResource(req.GetChannel().GetName())
-	if err := s.checkPermission(ctx, "eventarc.channels.update", req.GetChannel().GetName()); err != nil {
+	if err := s.checkPermission(ctx, perm("UpdateChannel"), req.GetChannel().GetName()); err != nil {
 		return nil, err
 	}
 	channel, err := s.storage.UpdateChannel(ctx, req.GetChannel(), req.GetUpdateMask())
@@ -395,11 +416,11 @@ func (s *Server) UpdateChannel(ctx context.Context, req *eventarcpb.UpdateChanne
 
 // DeleteChannel deletes an existing channel and returns a completed LRO.
 func (s *Server) DeleteChannel(ctx context.Context, req *eventarcpb.DeleteChannelRequest) (*longrunningpb.Operation, error) {
-	if req.GetName() == "" {
-		return nil, status.Error(codes.InvalidArgument, "name is required")
+	if err := requireField(req.GetName(), "name"); err != nil {
+		return nil, err
 	}
 	parent := parentFromResource(req.GetName())
-	if err := s.checkPermission(ctx, "eventarc.channels.delete", req.GetName()); err != nil {
+	if err := s.checkPermission(ctx, perm("DeleteChannel"), req.GetName()); err != nil {
 		return nil, err
 	}
 	channel, err := s.storage.GetChannel(ctx, req.GetName())
@@ -418,10 +439,10 @@ func (s *Server) DeleteChannel(ctx context.Context, req *eventarcpb.DeleteChanne
 
 // GetChannelConnection returns the channel connection with the given full resource name.
 func (s *Server) GetChannelConnection(ctx context.Context, req *eventarcpb.GetChannelConnectionRequest) (*eventarcpb.ChannelConnection, error) {
-	if req.GetName() == "" {
-		return nil, status.Error(codes.InvalidArgument, "name is required")
+	if err := requireField(req.GetName(), "name"); err != nil {
+		return nil, err
 	}
-	if err := s.checkPermission(ctx, "eventarc.channelConnections.get", req.GetName()); err != nil {
+	if err := s.checkPermission(ctx, perm("GetChannelConnection"), req.GetName()); err != nil {
 		return nil, err
 	}
 	return s.storage.GetChannelConnection(ctx, req.GetName())
@@ -429,10 +450,10 @@ func (s *Server) GetChannelConnection(ctx context.Context, req *eventarcpb.GetCh
 
 // ListChannelConnections lists channel connections under the given parent.
 func (s *Server) ListChannelConnections(ctx context.Context, req *eventarcpb.ListChannelConnectionsRequest) (*eventarcpb.ListChannelConnectionsResponse, error) {
-	if req.GetParent() == "" {
-		return nil, status.Error(codes.InvalidArgument, "parent is required")
+	if err := requireField(req.GetParent(), "parent"); err != nil {
+		return nil, err
 	}
-	if err := s.checkPermission(ctx, "eventarc.channelConnections.list", req.GetParent()); err != nil {
+	if err := s.checkPermission(ctx, perm("ListChannelConnections"), req.GetParent()); err != nil {
 		return nil, err
 	}
 	conns, nextToken, err := s.storage.ListChannelConnections(ctx, req.GetParent(), req.GetPageSize(), req.GetPageToken())
@@ -447,16 +468,16 @@ func (s *Server) ListChannelConnections(ctx context.Context, req *eventarcpb.Lis
 
 // CreateChannelConnection creates a new channel connection and returns a completed LRO.
 func (s *Server) CreateChannelConnection(ctx context.Context, req *eventarcpb.CreateChannelConnectionRequest) (*longrunningpb.Operation, error) {
-	if req.GetParent() == "" {
-		return nil, status.Error(codes.InvalidArgument, "parent is required")
+	if err := requireField(req.GetParent(), "parent"); err != nil {
+		return nil, err
 	}
-	if req.GetChannelConnectionId() == "" {
-		return nil, status.Error(codes.InvalidArgument, "channel_connection_id is required")
+	if err := requireField(req.GetChannelConnectionId(), "channel_connection_id"); err != nil {
+		return nil, err
 	}
 	if req.GetChannelConnection() == nil {
 		return nil, status.Error(codes.InvalidArgument, "channel_connection is required")
 	}
-	if err := s.checkPermission(ctx, "eventarc.channelConnections.create", req.GetParent()); err != nil {
+	if err := s.checkPermission(ctx, perm("CreateChannelConnection"), req.GetParent()); err != nil {
 		return nil, err
 	}
 	conn, err := s.storage.CreateChannelConnection(ctx, req.GetParent(), req.GetChannelConnectionId(), req.GetChannelConnection())
@@ -468,11 +489,11 @@ func (s *Server) CreateChannelConnection(ctx context.Context, req *eventarcpb.Cr
 
 // DeleteChannelConnection deletes an existing channel connection and returns a completed LRO.
 func (s *Server) DeleteChannelConnection(ctx context.Context, req *eventarcpb.DeleteChannelConnectionRequest) (*longrunningpb.Operation, error) {
-	if req.GetName() == "" {
-		return nil, status.Error(codes.InvalidArgument, "name is required")
+	if err := requireField(req.GetName(), "name"); err != nil {
+		return nil, err
 	}
 	parent := parentFromResource(req.GetName())
-	if err := s.checkPermission(ctx, "eventarc.channelConnections.delete", req.GetName()); err != nil {
+	if err := s.checkPermission(ctx, perm("DeleteChannelConnection"), req.GetName()); err != nil {
 		return nil, err
 	}
 	conn, err := s.storage.GetChannelConnection(ctx, req.GetName())
@@ -491,10 +512,10 @@ func (s *Server) DeleteChannelConnection(ctx context.Context, req *eventarcpb.De
 
 // GetGoogleChannelConfig returns the google channel config for the given name (singleton).
 func (s *Server) GetGoogleChannelConfig(ctx context.Context, req *eventarcpb.GetGoogleChannelConfigRequest) (*eventarcpb.GoogleChannelConfig, error) {
-	if req.GetName() == "" {
-		return nil, status.Error(codes.InvalidArgument, "name is required")
+	if err := requireField(req.GetName(), "name"); err != nil {
+		return nil, err
 	}
-	if err := s.checkPermission(ctx, "eventarc.googleChannelConfigs.get", req.GetName()); err != nil {
+	if err := s.checkPermission(ctx, perm("GetGoogleChannelConfig"), req.GetName()); err != nil {
 		return nil, err
 	}
 	return s.storage.GetGoogleChannelConfig(ctx, req.GetName())
@@ -505,7 +526,7 @@ func (s *Server) UpdateGoogleChannelConfig(ctx context.Context, req *eventarcpb.
 	if req.GetGoogleChannelConfig() == nil {
 		return nil, status.Error(codes.InvalidArgument, "google_channel_config is required")
 	}
-	if err := s.checkPermission(ctx, "eventarc.googleChannelConfigs.update", req.GetGoogleChannelConfig().GetName()); err != nil {
+	if err := s.checkPermission(ctx, perm("UpdateGoogleChannelConfig"), req.GetGoogleChannelConfig().GetName()); err != nil {
 		return nil, err
 	}
 	return s.storage.UpdateGoogleChannelConfig(ctx, req.GetGoogleChannelConfig(), req.GetUpdateMask())
@@ -517,10 +538,10 @@ func (s *Server) UpdateGoogleChannelConfig(ctx context.Context, req *eventarcpb.
 
 // GetMessageBus returns the message bus with the given full resource name.
 func (s *Server) GetMessageBus(ctx context.Context, req *eventarcpb.GetMessageBusRequest) (*eventarcpb.MessageBus, error) {
-	if req.GetName() == "" {
-		return nil, status.Error(codes.InvalidArgument, "name is required")
+	if err := requireField(req.GetName(), "name"); err != nil {
+		return nil, err
 	}
-	if err := s.checkPermission(ctx, "eventarc.messageBuses.get", req.GetName()); err != nil {
+	if err := s.checkPermission(ctx, perm("GetMessageBus"), req.GetName()); err != nil {
 		return nil, err
 	}
 	return s.storage.GetMessageBus(ctx, req.GetName())
@@ -528,10 +549,10 @@ func (s *Server) GetMessageBus(ctx context.Context, req *eventarcpb.GetMessageBu
 
 // ListMessageBuses lists message buses under the given parent.
 func (s *Server) ListMessageBuses(ctx context.Context, req *eventarcpb.ListMessageBusesRequest) (*eventarcpb.ListMessageBusesResponse, error) {
-	if req.GetParent() == "" {
-		return nil, status.Error(codes.InvalidArgument, "parent is required")
+	if err := requireField(req.GetParent(), "parent"); err != nil {
+		return nil, err
 	}
-	if err := s.checkPermission(ctx, "eventarc.messageBuses.list", req.GetParent()); err != nil {
+	if err := s.checkPermission(ctx, perm("ListMessageBuses"), req.GetParent()); err != nil {
 		return nil, err
 	}
 	buses, nextToken, err := s.storage.ListMessageBuses(ctx, req.GetParent(), req.GetPageSize(), req.GetPageToken())
@@ -546,10 +567,10 @@ func (s *Server) ListMessageBuses(ctx context.Context, req *eventarcpb.ListMessa
 
 // ListMessageBusEnrollments lists enrollments associated with the given message bus.
 func (s *Server) ListMessageBusEnrollments(ctx context.Context, req *eventarcpb.ListMessageBusEnrollmentsRequest) (*eventarcpb.ListMessageBusEnrollmentsResponse, error) {
-	if req.GetParent() == "" {
-		return nil, status.Error(codes.InvalidArgument, "parent is required")
+	if err := requireField(req.GetParent(), "parent"); err != nil {
+		return nil, err
 	}
-	if err := s.checkPermission(ctx, "eventarc.messageBuses.list", req.GetParent()); err != nil {
+	if err := s.checkPermission(ctx, perm("ListMessageBusEnrollments"), req.GetParent()); err != nil {
 		return nil, err
 	}
 	enrollments, nextToken, err := s.storage.ListMessageBusEnrollments(ctx, req.GetParent(), req.GetPageSize(), req.GetPageToken())
@@ -564,16 +585,16 @@ func (s *Server) ListMessageBusEnrollments(ctx context.Context, req *eventarcpb.
 
 // CreateMessageBus creates a new message bus and returns a completed LRO.
 func (s *Server) CreateMessageBus(ctx context.Context, req *eventarcpb.CreateMessageBusRequest) (*longrunningpb.Operation, error) {
-	if req.GetParent() == "" {
-		return nil, status.Error(codes.InvalidArgument, "parent is required")
+	if err := requireField(req.GetParent(), "parent"); err != nil {
+		return nil, err
 	}
-	if req.GetMessageBusId() == "" {
-		return nil, status.Error(codes.InvalidArgument, "message_bus_id is required")
+	if err := requireField(req.GetMessageBusId(), "message_bus_id"); err != nil {
+		return nil, err
 	}
 	if req.GetMessageBus() == nil {
 		return nil, status.Error(codes.InvalidArgument, "message_bus is required")
 	}
-	if err := s.checkPermission(ctx, "eventarc.messageBuses.create", req.GetParent()); err != nil {
+	if err := s.checkPermission(ctx, perm("CreateMessageBus"), req.GetParent()); err != nil {
 		return nil, err
 	}
 	bus, err := s.storage.CreateMessageBus(ctx, req.GetParent(), req.GetMessageBusId(), req.GetMessageBus())
@@ -585,11 +606,11 @@ func (s *Server) CreateMessageBus(ctx context.Context, req *eventarcpb.CreateMes
 
 // UpdateMessageBus updates an existing message bus and returns a completed LRO.
 func (s *Server) UpdateMessageBus(ctx context.Context, req *eventarcpb.UpdateMessageBusRequest) (*longrunningpb.Operation, error) {
-	if req.GetMessageBus() == nil || req.GetMessageBus().GetName() == "" {
-		return nil, status.Error(codes.InvalidArgument, "message_bus.name is required")
+	if err := requireField(req.GetMessageBus().GetName(), "message_bus.name"); err != nil {
+		return nil, err
 	}
 	parent := parentFromResource(req.GetMessageBus().GetName())
-	if err := s.checkPermission(ctx, "eventarc.messageBuses.update", req.GetMessageBus().GetName()); err != nil {
+	if err := s.checkPermission(ctx, perm("UpdateMessageBus"), req.GetMessageBus().GetName()); err != nil {
 		return nil, err
 	}
 	bus, err := s.storage.UpdateMessageBus(ctx, req.GetMessageBus(), req.GetUpdateMask())
@@ -601,11 +622,11 @@ func (s *Server) UpdateMessageBus(ctx context.Context, req *eventarcpb.UpdateMes
 
 // DeleteMessageBus deletes an existing message bus and returns a completed LRO.
 func (s *Server) DeleteMessageBus(ctx context.Context, req *eventarcpb.DeleteMessageBusRequest) (*longrunningpb.Operation, error) {
-	if req.GetName() == "" {
-		return nil, status.Error(codes.InvalidArgument, "name is required")
+	if err := requireField(req.GetName(), "name"); err != nil {
+		return nil, err
 	}
 	parent := parentFromResource(req.GetName())
-	if err := s.checkPermission(ctx, "eventarc.messageBuses.delete", req.GetName()); err != nil {
+	if err := s.checkPermission(ctx, perm("DeleteMessageBus"), req.GetName()); err != nil {
 		return nil, err
 	}
 	bus, err := s.storage.GetMessageBus(ctx, req.GetName())
@@ -624,10 +645,10 @@ func (s *Server) DeleteMessageBus(ctx context.Context, req *eventarcpb.DeleteMes
 
 // GetEnrollment returns the enrollment with the given full resource name.
 func (s *Server) GetEnrollment(ctx context.Context, req *eventarcpb.GetEnrollmentRequest) (*eventarcpb.Enrollment, error) {
-	if req.GetName() == "" {
-		return nil, status.Error(codes.InvalidArgument, "name is required")
+	if err := requireField(req.GetName(), "name"); err != nil {
+		return nil, err
 	}
-	if err := s.checkPermission(ctx, "eventarc.enrollments.get", req.GetName()); err != nil {
+	if err := s.checkPermission(ctx, perm("GetEnrollment"), req.GetName()); err != nil {
 		return nil, err
 	}
 	return s.storage.GetEnrollment(ctx, req.GetName())
@@ -635,10 +656,10 @@ func (s *Server) GetEnrollment(ctx context.Context, req *eventarcpb.GetEnrollmen
 
 // ListEnrollments lists enrollments under the given parent.
 func (s *Server) ListEnrollments(ctx context.Context, req *eventarcpb.ListEnrollmentsRequest) (*eventarcpb.ListEnrollmentsResponse, error) {
-	if req.GetParent() == "" {
-		return nil, status.Error(codes.InvalidArgument, "parent is required")
+	if err := requireField(req.GetParent(), "parent"); err != nil {
+		return nil, err
 	}
-	if err := s.checkPermission(ctx, "eventarc.enrollments.list", req.GetParent()); err != nil {
+	if err := s.checkPermission(ctx, perm("ListEnrollments"), req.GetParent()); err != nil {
 		return nil, err
 	}
 	enrollments, nextToken, err := s.storage.ListEnrollments(ctx, req.GetParent(), req.GetPageSize(), req.GetPageToken())
@@ -653,16 +674,16 @@ func (s *Server) ListEnrollments(ctx context.Context, req *eventarcpb.ListEnroll
 
 // CreateEnrollment creates a new enrollment and returns a completed LRO.
 func (s *Server) CreateEnrollment(ctx context.Context, req *eventarcpb.CreateEnrollmentRequest) (*longrunningpb.Operation, error) {
-	if req.GetParent() == "" {
-		return nil, status.Error(codes.InvalidArgument, "parent is required")
+	if err := requireField(req.GetParent(), "parent"); err != nil {
+		return nil, err
 	}
-	if req.GetEnrollmentId() == "" {
-		return nil, status.Error(codes.InvalidArgument, "enrollment_id is required")
+	if err := requireField(req.GetEnrollmentId(), "enrollment_id"); err != nil {
+		return nil, err
 	}
 	if req.GetEnrollment() == nil {
 		return nil, status.Error(codes.InvalidArgument, "enrollment is required")
 	}
-	if err := s.checkPermission(ctx, "eventarc.enrollments.create", req.GetParent()); err != nil {
+	if err := s.checkPermission(ctx, perm("CreateEnrollment"), req.GetParent()); err != nil {
 		return nil, err
 	}
 	enrollment, err := s.storage.CreateEnrollment(ctx, req.GetParent(), req.GetEnrollmentId(), req.GetEnrollment())
@@ -674,11 +695,11 @@ func (s *Server) CreateEnrollment(ctx context.Context, req *eventarcpb.CreateEnr
 
 // UpdateEnrollment updates an existing enrollment and returns a completed LRO.
 func (s *Server) UpdateEnrollment(ctx context.Context, req *eventarcpb.UpdateEnrollmentRequest) (*longrunningpb.Operation, error) {
-	if req.GetEnrollment() == nil || req.GetEnrollment().GetName() == "" {
-		return nil, status.Error(codes.InvalidArgument, "enrollment.name is required")
+	if err := requireField(req.GetEnrollment().GetName(), "enrollment.name"); err != nil {
+		return nil, err
 	}
 	parent := parentFromResource(req.GetEnrollment().GetName())
-	if err := s.checkPermission(ctx, "eventarc.enrollments.update", req.GetEnrollment().GetName()); err != nil {
+	if err := s.checkPermission(ctx, perm("UpdateEnrollment"), req.GetEnrollment().GetName()); err != nil {
 		return nil, err
 	}
 	enrollment, err := s.storage.UpdateEnrollment(ctx, req.GetEnrollment(), req.GetUpdateMask())
@@ -690,11 +711,11 @@ func (s *Server) UpdateEnrollment(ctx context.Context, req *eventarcpb.UpdateEnr
 
 // DeleteEnrollment deletes an existing enrollment and returns a completed LRO.
 func (s *Server) DeleteEnrollment(ctx context.Context, req *eventarcpb.DeleteEnrollmentRequest) (*longrunningpb.Operation, error) {
-	if req.GetName() == "" {
-		return nil, status.Error(codes.InvalidArgument, "name is required")
+	if err := requireField(req.GetName(), "name"); err != nil {
+		return nil, err
 	}
 	parent := parentFromResource(req.GetName())
-	if err := s.checkPermission(ctx, "eventarc.enrollments.delete", req.GetName()); err != nil {
+	if err := s.checkPermission(ctx, perm("DeleteEnrollment"), req.GetName()); err != nil {
 		return nil, err
 	}
 	enrollment, err := s.storage.GetEnrollment(ctx, req.GetName())
@@ -713,10 +734,10 @@ func (s *Server) DeleteEnrollment(ctx context.Context, req *eventarcpb.DeleteEnr
 
 // GetPipeline returns the pipeline with the given full resource name.
 func (s *Server) GetPipeline(ctx context.Context, req *eventarcpb.GetPipelineRequest) (*eventarcpb.Pipeline, error) {
-	if req.GetName() == "" {
-		return nil, status.Error(codes.InvalidArgument, "name is required")
+	if err := requireField(req.GetName(), "name"); err != nil {
+		return nil, err
 	}
-	if err := s.checkPermission(ctx, "eventarc.pipelines.get", req.GetName()); err != nil {
+	if err := s.checkPermission(ctx, perm("GetPipeline"), req.GetName()); err != nil {
 		return nil, err
 	}
 	return s.storage.GetPipeline(ctx, req.GetName())
@@ -724,10 +745,10 @@ func (s *Server) GetPipeline(ctx context.Context, req *eventarcpb.GetPipelineReq
 
 // ListPipelines lists pipelines under the given parent.
 func (s *Server) ListPipelines(ctx context.Context, req *eventarcpb.ListPipelinesRequest) (*eventarcpb.ListPipelinesResponse, error) {
-	if req.GetParent() == "" {
-		return nil, status.Error(codes.InvalidArgument, "parent is required")
+	if err := requireField(req.GetParent(), "parent"); err != nil {
+		return nil, err
 	}
-	if err := s.checkPermission(ctx, "eventarc.pipelines.list", req.GetParent()); err != nil {
+	if err := s.checkPermission(ctx, perm("ListPipelines"), req.GetParent()); err != nil {
 		return nil, err
 	}
 	pipelines, nextToken, err := s.storage.ListPipelines(ctx, req.GetParent(), req.GetPageSize(), req.GetPageToken())
@@ -742,16 +763,16 @@ func (s *Server) ListPipelines(ctx context.Context, req *eventarcpb.ListPipeline
 
 // CreatePipeline creates a new pipeline and returns a completed LRO.
 func (s *Server) CreatePipeline(ctx context.Context, req *eventarcpb.CreatePipelineRequest) (*longrunningpb.Operation, error) {
-	if req.GetParent() == "" {
-		return nil, status.Error(codes.InvalidArgument, "parent is required")
+	if err := requireField(req.GetParent(), "parent"); err != nil {
+		return nil, err
 	}
-	if req.GetPipelineId() == "" {
-		return nil, status.Error(codes.InvalidArgument, "pipeline_id is required")
+	if err := requireField(req.GetPipelineId(), "pipeline_id"); err != nil {
+		return nil, err
 	}
 	if req.GetPipeline() == nil {
 		return nil, status.Error(codes.InvalidArgument, "pipeline is required")
 	}
-	if err := s.checkPermission(ctx, "eventarc.pipelines.create", req.GetParent()); err != nil {
+	if err := s.checkPermission(ctx, perm("CreatePipeline"), req.GetParent()); err != nil {
 		return nil, err
 	}
 	pipeline, err := s.storage.CreatePipeline(ctx, req.GetParent(), req.GetPipelineId(), req.GetPipeline())
@@ -763,11 +784,11 @@ func (s *Server) CreatePipeline(ctx context.Context, req *eventarcpb.CreatePipel
 
 // UpdatePipeline updates an existing pipeline and returns a completed LRO.
 func (s *Server) UpdatePipeline(ctx context.Context, req *eventarcpb.UpdatePipelineRequest) (*longrunningpb.Operation, error) {
-	if req.GetPipeline() == nil || req.GetPipeline().GetName() == "" {
-		return nil, status.Error(codes.InvalidArgument, "pipeline.name is required")
+	if err := requireField(req.GetPipeline().GetName(), "pipeline.name"); err != nil {
+		return nil, err
 	}
 	parent := parentFromResource(req.GetPipeline().GetName())
-	if err := s.checkPermission(ctx, "eventarc.pipelines.update", req.GetPipeline().GetName()); err != nil {
+	if err := s.checkPermission(ctx, perm("UpdatePipeline"), req.GetPipeline().GetName()); err != nil {
 		return nil, err
 	}
 	pipeline, err := s.storage.UpdatePipeline(ctx, req.GetPipeline(), req.GetUpdateMask())
@@ -779,11 +800,11 @@ func (s *Server) UpdatePipeline(ctx context.Context, req *eventarcpb.UpdatePipel
 
 // DeletePipeline deletes an existing pipeline and returns a completed LRO.
 func (s *Server) DeletePipeline(ctx context.Context, req *eventarcpb.DeletePipelineRequest) (*longrunningpb.Operation, error) {
-	if req.GetName() == "" {
-		return nil, status.Error(codes.InvalidArgument, "name is required")
+	if err := requireField(req.GetName(), "name"); err != nil {
+		return nil, err
 	}
 	parent := parentFromResource(req.GetName())
-	if err := s.checkPermission(ctx, "eventarc.pipelines.delete", req.GetName()); err != nil {
+	if err := s.checkPermission(ctx, perm("DeletePipeline"), req.GetName()); err != nil {
 		return nil, err
 	}
 	pipeline, err := s.storage.GetPipeline(ctx, req.GetName())
@@ -802,10 +823,10 @@ func (s *Server) DeletePipeline(ctx context.Context, req *eventarcpb.DeletePipel
 
 // GetGoogleApiSource returns the google api source with the given full resource name.
 func (s *Server) GetGoogleApiSource(ctx context.Context, req *eventarcpb.GetGoogleApiSourceRequest) (*eventarcpb.GoogleApiSource, error) {
-	if req.GetName() == "" {
-		return nil, status.Error(codes.InvalidArgument, "name is required")
+	if err := requireField(req.GetName(), "name"); err != nil {
+		return nil, err
 	}
-	if err := s.checkPermission(ctx, "eventarc.googleApiSources.get", req.GetName()); err != nil {
+	if err := s.checkPermission(ctx, perm("GetGoogleApiSource"), req.GetName()); err != nil {
 		return nil, err
 	}
 	return s.storage.GetGoogleApiSource(ctx, req.GetName())
@@ -813,10 +834,10 @@ func (s *Server) GetGoogleApiSource(ctx context.Context, req *eventarcpb.GetGoog
 
 // ListGoogleApiSources lists google api sources under the given parent.
 func (s *Server) ListGoogleApiSources(ctx context.Context, req *eventarcpb.ListGoogleApiSourcesRequest) (*eventarcpb.ListGoogleApiSourcesResponse, error) {
-	if req.GetParent() == "" {
-		return nil, status.Error(codes.InvalidArgument, "parent is required")
+	if err := requireField(req.GetParent(), "parent"); err != nil {
+		return nil, err
 	}
-	if err := s.checkPermission(ctx, "eventarc.googleApiSources.list", req.GetParent()); err != nil {
+	if err := s.checkPermission(ctx, perm("ListGoogleApiSources"), req.GetParent()); err != nil {
 		return nil, err
 	}
 	sources, nextToken, err := s.storage.ListGoogleApiSources(ctx, req.GetParent(), req.GetPageSize(), req.GetPageToken())
@@ -831,16 +852,16 @@ func (s *Server) ListGoogleApiSources(ctx context.Context, req *eventarcpb.ListG
 
 // CreateGoogleApiSource creates a new google api source and returns a completed LRO.
 func (s *Server) CreateGoogleApiSource(ctx context.Context, req *eventarcpb.CreateGoogleApiSourceRequest) (*longrunningpb.Operation, error) {
-	if req.GetParent() == "" {
-		return nil, status.Error(codes.InvalidArgument, "parent is required")
+	if err := requireField(req.GetParent(), "parent"); err != nil {
+		return nil, err
 	}
-	if req.GetGoogleApiSourceId() == "" {
-		return nil, status.Error(codes.InvalidArgument, "google_api_source_id is required")
+	if err := requireField(req.GetGoogleApiSourceId(), "google_api_source_id"); err != nil {
+		return nil, err
 	}
 	if req.GetGoogleApiSource() == nil {
 		return nil, status.Error(codes.InvalidArgument, "google_api_source is required")
 	}
-	if err := s.checkPermission(ctx, "eventarc.googleApiSources.create", req.GetParent()); err != nil {
+	if err := s.checkPermission(ctx, perm("CreateGoogleApiSource"), req.GetParent()); err != nil {
 		return nil, err
 	}
 	source, err := s.storage.CreateGoogleApiSource(ctx, req.GetParent(), req.GetGoogleApiSourceId(), req.GetGoogleApiSource())
@@ -852,11 +873,11 @@ func (s *Server) CreateGoogleApiSource(ctx context.Context, req *eventarcpb.Crea
 
 // UpdateGoogleApiSource updates an existing google api source and returns a completed LRO.
 func (s *Server) UpdateGoogleApiSource(ctx context.Context, req *eventarcpb.UpdateGoogleApiSourceRequest) (*longrunningpb.Operation, error) {
-	if req.GetGoogleApiSource() == nil || req.GetGoogleApiSource().GetName() == "" {
-		return nil, status.Error(codes.InvalidArgument, "google_api_source.name is required")
+	if err := requireField(req.GetGoogleApiSource().GetName(), "google_api_source.name"); err != nil {
+		return nil, err
 	}
 	parent := parentFromResource(req.GetGoogleApiSource().GetName())
-	if err := s.checkPermission(ctx, "eventarc.googleApiSources.update", req.GetGoogleApiSource().GetName()); err != nil {
+	if err := s.checkPermission(ctx, perm("UpdateGoogleApiSource"), req.GetGoogleApiSource().GetName()); err != nil {
 		return nil, err
 	}
 	source, err := s.storage.UpdateGoogleApiSource(ctx, req.GetGoogleApiSource(), req.GetUpdateMask())
@@ -868,11 +889,11 @@ func (s *Server) UpdateGoogleApiSource(ctx context.Context, req *eventarcpb.Upda
 
 // DeleteGoogleApiSource deletes an existing google api source and returns a completed LRO.
 func (s *Server) DeleteGoogleApiSource(ctx context.Context, req *eventarcpb.DeleteGoogleApiSourceRequest) (*longrunningpb.Operation, error) {
-	if req.GetName() == "" {
-		return nil, status.Error(codes.InvalidArgument, "name is required")
+	if err := requireField(req.GetName(), "name"); err != nil {
+		return nil, err
 	}
 	parent := parentFromResource(req.GetName())
-	if err := s.checkPermission(ctx, "eventarc.googleApiSources.delete", req.GetName()); err != nil {
+	if err := s.checkPermission(ctx, perm("DeleteGoogleApiSource"), req.GetName()); err != nil {
 		return nil, err
 	}
 	source, err := s.storage.GetGoogleApiSource(ctx, req.GetName())
