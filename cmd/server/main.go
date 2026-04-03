@@ -102,7 +102,7 @@ func main() {
 		listenPort = *port
 	}
 
-	log.Printf("GCP Eventarc Emulator v%s", version)
+	lgr.Info("GCP Eventarc Emulator v%s", version)
 	lgr.Info("Log level: %s", *logLevel)
 
 	// Create listener for gRPC server
@@ -136,17 +136,20 @@ func main() {
 	//   - grpc/reflection
 	grpcServer := server.NewGRPCServer(srv, pub, lgr)
 
-	lgr.Info("Server listening at %v", lis.Addr())
-	lgr.Info("Ready to accept connections")
+	readyCh := make(chan struct{})
 
 	// Start gRPC server
 	go func() {
+		lgr.Info("gRPC server listening at %v", lis.Addr())
+		close(readyCh)
 		if err := grpcServer.Serve(lis); err != nil {
 			log.Fatalf("Failed to serve: %v", err)
 		}
 	}()
 
-	lgr.Info("Publisher service registered")
+	<-readyCh
+	lgr.Info("Ready to accept gRPC connections")
+	lgr.Info("gRPC: localhost:%d", listenPort)
 
 	// Wait for interrupt signal to gracefully shut down
 	quit := make(chan os.Signal, 1)
