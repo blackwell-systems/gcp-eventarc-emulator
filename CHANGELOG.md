@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Docker support** — Multi-stage `Dockerfile` (~17MB final image) and `docker-compose.yml` wiring the emulator with a webhook receiver for one-command local demos
+- **SDK demo** (`examples/sdk-demo`) — End-to-end example using the official `cloud.google.com/go/eventarc` and `cloud.google.com/go/eventarc/publishing` SDK clients against the emulator; proves drop-in compatibility without GCP credentials
+- **curl demo** (`examples/demo.sh`) — Shell script demonstrating the full event flow via REST: providers, channels, triggers, message buses, pipelines, enrollments, and CloudEvent publish → delivery
+- **Webhook receiver** (`examples/webhook-receiver`) — Tiny Go HTTP server that pretty-prints incoming CloudEvents showing `Ce-*` headers and body
+
+### Fixed
+
+- **Delete LRO response type** — All 7 delete operations (`DeleteTrigger`, `DeleteChannel`, `DeleteChannelConnection`, `DeleteMessageBus`, `DeleteEnrollment`, `DeletePipeline`, `DeleteGoogleApiSource`) now return the deleted resource in the LRO response instead of `google.protobuf.Empty`, matching real GCP Eventarc SDK expectations (`deleteOp.Wait()` returns the deleted resource)
+
 ## [0.1.0] - 2026-04-02
 
 ### Added
