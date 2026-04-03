@@ -31,6 +31,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Single-dash vs double-dash flag note** — README Run Server section now notes that Go flags accept both `-flag` and `--flag`
 - **`--version` includes binary name** — `--version` output now appends `(server)`, `(server-rest)`, or `(server-dual)` to distinguish binaries
 
+- **gRPC debug interceptor** — `--log-level debug` now logs every gRPC method call and outcome (`[DEBUG] grpc: /service/Method → ok`), making it useful for troubleshooting CRUD operations, not just event routing
+
+### Fixed
+
+- **Delete LRO response type (regression)** — All 7 `Delete*` methods again return the deleted resource in the LRO response; a round-2 fix incorrectly changed them to return `google.protobuf.Empty`, breaking `deleteOp.Wait()` in the GCP Go SDK (`DeleteTriggerOperation.Wait()` expects the deleted resource)
+
 - **Docker support** — Multi-stage `Dockerfile` (~17MB final image) and `docker-compose.yml` wiring the emulator with a webhook receiver for one-command local demos
 - **SDK demo** (`examples/sdk-demo`) — End-to-end example using the official `cloud.google.com/go/eventarc` and `cloud.google.com/go/eventarc/publishing` SDK clients against the emulator; proves drop-in compatibility without GCP credentials
 - **curl demo** (`examples/demo.sh`) — Shell script demonstrating the full event flow via REST: providers, channels, triggers, message buses, pipelines, enrollments, and CloudEvent publish → delivery
