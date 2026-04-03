@@ -86,6 +86,12 @@ func New(grpcAddr string) (*Gateway, error) {
 	return &Gateway{mux: mux, conn: conn, opsClient: opsClient}, nil
 }
 
+// Handler returns the HTTP handler for this gateway, suitable for mounting
+// into a parent mux (e.g. the unified gcp-emulator gateway).
+func (g *Gateway) Handler() http.Handler {
+	return projectScopedLRORewriter(g.opsClient, g.mux)
+}
+
 // Start starts the HTTP gateway on the given address (non-blocking).
 func (g *Gateway) Start(httpAddr string) error {
 	ln, err := net.Listen("tcp", httpAddr)
