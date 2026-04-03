@@ -2,114 +2,247 @@
 
 **Metadata:**
 - Audit Date: 2026-04-02
-- Tool: gcp-eventarc-emulator
-- Tool Version: see `go run ./cmd/server-dual --help` (no --version flag; version implied by module)
+- Tool: gcp-eventarc-emulator (binaries: `server`, `server-rest`, `server-dual`)
+- Tool Version: v0.1.0
 - Sandbox mode: local
-- Sandbox: Go project at /Users/dayna.blackwell/code/gcp-eventarc-emulator. The server is started with `go run ./cmd/server-dual` (or pre-built binary). gRPC port 9085, HTTP REST port 8085. Env var EVENTARC_EMULATOR_HOST=localhost:9085.
-- Exec prefix: (none — run commands directly from /Users/dayna.blackwell/code/gcp-eventarc-emulator; start the server in background before REST/SDK tests)
+- Sandbox: host machine running directly from /Users/dayna.blackwell/code/gcp-eventarc-emulator with no Docker; all state is in-memory only
+- Exec prefix: `cd /Users/dayna.blackwell/code/gcp-eventarc-emulator &&`
 
 ---
 
-You are performing a UX audit of gcp-eventarc-emulator — a tool that provides a production-grade local emulator for GCP Eventarc with full API surface (47 RPCs), CloudEvent routing with CEL conditions, and multi-protocol support (gRPC + REST + CloudEvents), enabling local development without GCP credentials.
+You are performing a UX audit of gcp-eventarc-emulator — a tool that provides a production-grade local emulator for GCP Eventarc with a full API surface (47 RPCs), CloudEvent routing with CEL conditions, and multi-protocol support (gRPC + REST + CloudEvents), enabling local development and integration testing without GCP credentials.
 
 You are acting as a **new user** encountering this tool for the first time.
 
-Sandbox: Go project at /Users/dayna.blackwell/code/gcp-eventarc-emulator. The server is started with `go run ./cmd/server-dual`. gRPC port 9085, HTTP REST port 8085. Env var EVENTARC_EMULATOR_HOST=localhost:9085. All state is in-memory only.
+Sandbox: host machine running directly from /Users/dayna.blackwell/code/gcp-eventarc-emulator; all emulator state is in-memory and disappears when the server process exits.
 
-Run all commands from the project root: `/Users/dayna.blackwell/code/gcp-eventarc-emulator`
+Run all commands from the project root: `cd /Users/dayna.blackwell/code/gcp-eventarc-emulator && <command>`
+
+**Important:** Many audit areas require a running server. Start the server in the background at the beginning of each such area and kill it when done. Use `go run ./cmd/server-dual` as the server for all REST and gRPC tests.
 
 ## Audit Areas
 
-### 1. Discovery — Help text and server variants
+### 1. Discovery
 
-Evaluate clarity, completeness, and consistency of help output across all three server variants.
+Explore the project as a new user would — README, help text, version flags.
 
-```bash
-go run ./cmd/server --help
-go run ./cmd/server-rest --help
-go run ./cmd/server-dual --help
+```
+cd /Users/dayna.blackwell/code/gcp-eventarc-emulator && head -60 README.md
+
+cd /Users/dayna.blackwell/code/gcp-eventarc-emulator && go run ./cmd/server-dual --help
+cd /Users/dayna.blackwell/code/gcp-eventarc-emulator && go run ./cmd/server --help
+cd /Users/dayna.blackwell/code/gcp-eventarc-emulator && go run ./cmd/server-rest --help
+
+cd /Users/dayna.blackwell/code/gcp-eventarc-emulator && go run ./cmd/server-dual --version
+cd /Users/dayna.blackwell/code/gcp-eventarc-emulator && go run ./cmd/server --version
+cd /Users/dayna.blackwell/code/gcp-eventarc-emulator && go run ./cmd/server-rest --version
 ```
 
-Also check for a version flag:
-```bash
-go run ./cmd/server-dual --version
-go run ./cmd/server --version
-```
-
-Check the README for first-run orientation:
-```bash
-head -60 README.md
-```
-
-Note: Do all three variants explain their differences? Is the flag naming consistent? Does help text explain env vars?
+Note:
+- Does `--help` output make the three server variants and their differences clear?
+- Is the env var table present and readable?
+- Does `--version` print cleanly and exit 0?
+- Is the deprecated `--port` flag on `server` called out clearly in help text?
 
 ---
 
-### 2. First Run — Starting the server
+### 2. First Run — Startup and Port Bindings
 
-Start the dual-protocol server in the background (it serves both gRPC on :9085 and HTTP on :8085):
+Start the dual-protocol server and observe startup output.
 
-```bash
-go run ./cmd/server-dual &
-sleep 3
 ```
+cd /Users/dayna.blackwell/code/gcp-eventarc-emulator && go run ./cmd/server-dual > /tmp/emulator.log 2>&1 &
+sleep 2
 
-Verify it is listening on both ports:
-```bash
 curl -s http://localhost:8085/v1/projects/test/locations/us-central1/triggers
 curl -s http://localhost:8085/v1/projects/test/locations/us-central1/providers
+
+cat /tmp/emulator.log
+
+kill %1 2>/dev/null
 ```
 
-Also try starting with a non-default port via flag:
-```bash
-go run ./cmd/server-dual --grpc-port 19085 --http-port 18085 &
-sleep 2
-curl -s http://localhost:18085/v1/projects/test/locations/us-central1/triggers
-kill %2
-```
-
-Try starting with the log-level flag:
-```bash
-go run ./cmd/server-dual --log-level debug &
-sleep 2
-kill %2
-```
-
-Check env var override for log level:
-```bash
-GCP_MOCK_LOG_LEVEL=debug go run ./cmd/server-dual &
-sleep 2
-kill %2
-```
-
-Note: What does startup output look like? Does it clearly indicate which ports are active? Is there a readiness signal?
+Note:
+- What does the startup log look like? JSON structured or plain text?
+- Does it clearly state which ports are bound (gRPC :9085, HTTP :8085)?
+- Is there a "ready" signal a user can reliably wait for?
+- Does the first `curl` for triggers return an empty list or an error?
+- Does the providers list return seeded data on first run?
 
 ---
 
-### 3. REST API — Core CRUD workflow
+### 3. REST API — Core Resource Lifecycle
 
-With the server running on default ports, exercise the full REST API surface as a new user following the README quick-start.
+Exercise create/list/get/delete for triggers, channels, providers, and other resource types via the REST API at port 8085. This area covers the primary user path shown in the README quick-start.
 
-**Providers (read-only, seeded at startup):**
-```bash
-curl -s http://localhost:8085/v1/projects/my-project/locations/us-central1/providers | python3 -m json.tool
-curl -s http://localhost:8085/v1/projects/my-project/locations/us-central1/providers/pubsub.googleapis.com | python3 -m json.tool
 ```
+cd /Users/dayna.blackwell/code/gcp-eventarc-emulator && go run ./cmd/server-dual > /tmp/emulator.log 2>&1 &
+sleep 2
 
-**Channels:**
-```bash
-curl -s -X POST "http://localhost:8085/v1/projects/my-project/locations/us-central1/channels?channelId=my-channel" \
+BASE="http://localhost:8085/v1/projects/my-project/locations/us-central1"
+
+# List providers (seeded at startup)
+curl -s "$BASE/providers"
+
+# Get a specific provider
+curl -s "$BASE/providers/pubsub.googleapis.com"
+
+# Create a trigger
+curl -s -X POST "$BASE/triggers?triggerId=audit-trigger" \
   -H "Content-Type: application/json" \
-  -d '{}' | python3 -m json.tool
+  -d '{
+    "eventFilters": [
+      {"attribute": "type", "value": "google.cloud.pubsub.topic.v1.messagePublished"}
+    ],
+    "destination": {
+      "httpEndpoint": {"uri": "http://localhost:3000/webhook"}
+    }
+  }'
 
-curl -s "http://localhost:8085/v1/projects/my-project/locations/us-central1/channels" | python3 -m json.tool
+# List triggers
+curl -s "$BASE/triggers"
 
-curl -s "http://localhost:8085/v1/projects/my-project/locations/us-central1/channels/my-channel" | python3 -m json.tool
+# Get trigger by name
+curl -s "$BASE/triggers/audit-trigger"
+
+# Create a channel
+curl -s -X POST "$BASE/channels?channelId=audit-channel" \
+  -H "Content-Type: application/json" \
+  -d '{}'
+
+# List channels
+curl -s "$BASE/channels"
+
+# Get channel by name
+curl -s "$BASE/channels/audit-channel"
+
+# Get Google Channel Config (singleton — no Create endpoint)
+curl -s "$BASE/googleChannelConfig"
+
+# Create a message bus
+curl -s -X POST "$BASE/messageBuses?messageBusId=audit-bus" \
+  -H "Content-Type: application/json" \
+  -d '{}'
+
+# List message buses
+curl -s "$BASE/messageBuses"
+
+# Create a pipeline
+curl -s -X POST "$BASE/pipelines?pipelineId=audit-pipeline" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "destinations": [
+      {"httpEndpoint": {"uri": "http://localhost:3000/pipeline"}}
+    ]
+  }'
+
+# List pipelines
+curl -s "$BASE/pipelines"
+
+# Create an enrollment
+curl -s -X POST "$BASE/enrollments?enrollmentId=audit-enrollment" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "celMatch": "message.type == '\''google.cloud.pubsub.topic.v1.messagePublished'\''",
+    "messageBus": "projects/my-project/locations/us-central1/messageBuses/audit-bus",
+    "destination": "projects/my-project/locations/us-central1/pipelines/audit-pipeline"
+  }'
+
+# List enrollments
+curl -s "$BASE/enrollments"
+
+# Delete the trigger
+curl -s -w "\nHTTP %{http_code}\n" -X DELETE "$BASE/triggers/audit-trigger"
+
+# Verify deletion — expect NOT_FOUND
+curl -s -w "\nHTTP %{http_code}\n" "$BASE/triggers/audit-trigger"
+
+kill %1 2>/dev/null
 ```
 
-**Triggers — create, list, get:**
-```bash
-curl -s -X POST "http://localhost:8085/v1/projects/my-project/locations/us-central1/triggers?triggerId=pubsub-trigger" \
+Note:
+- Do create responses return the full resource or just an LRO envelope?
+- Is the JSON structure consistent across resource types (e.g., same envelope for channels, triggers, buses)?
+- Does the delete response body provide any confirmation message or just an empty body?
+- Are resource names in responses the fully-qualified GCP form (e.g., `projects/my-project/locations/us-central1/triggers/audit-trigger`)?
+- Does get-after-delete return 404 / NOT_FOUND?
+
+---
+
+### 4. LRO REST Gateway
+
+All Create/Update/Delete operations return Long-Running Operations. Verify the LRO REST endpoint at `/v1/operations/{name}` is accessible and returns the expected structure.
+
+```
+cd /Users/dayna.blackwell/code/gcp-eventarc-emulator && go run ./cmd/server-dual > /tmp/emulator.log 2>&1 &
+sleep 2
+
+BASE="http://localhost:8085/v1/projects/my-project/locations/us-central1"
+
+# Create a trigger and capture the operation name
+RESP=$(curl -s -X POST "$BASE/triggers?triggerId=lro-test-trigger" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "eventFilters": [
+      {"attribute": "type", "value": "google.cloud.pubsub.topic.v1.messagePublished"}
+    ],
+    "destination": {
+      "httpEndpoint": {"uri": "http://localhost:3000/webhook"}
+    }
+  }')
+echo "$RESP"
+
+# Extract the operation name
+OP_NAME=$(echo "$RESP" | python3 -c "import sys,json; print(json.load(sys.stdin).get('name',''))" 2>/dev/null)
+echo "Operation name: $OP_NAME"
+
+# Poll the operation via its REST URL
+if [ -n "$OP_NAME" ]; then
+  curl -s "http://localhost:8085/v1/$OP_NAME"
+fi
+
+# List operations
+curl -s "$BASE/operations"
+
+# Get a nonexistent operation
+curl -s -w "\nHTTP %{http_code}\n" "http://localhost:8085/v1/operations/does-not-exist"
+
+kill %1 2>/dev/null
+```
+
+Note:
+- Does the create response include a `name` field that looks like an operation path?
+- Does `GET /v1/<operation-name>` return a valid LRO with `done: true` and `response` containing the trigger?
+- Is `response` the embedded trigger proto (as GCP SDKs expect via `anypb.Any`)?
+- Is the operations list endpoint accessible at `$BASE/operations`?
+- Does a nonexistent operation return 404?
+
+---
+
+### 5. Event Publishing and Routing
+
+Test the full CloudEvent delivery loop: publish → route → dispatch → HTTP delivery in binary content mode. The webhook receiver at `examples/webhook-receiver` must be running.
+
+```
+# Start webhook receiver (port 3000)
+cd /Users/dayna.blackwell/code/gcp-eventarc-emulator && go run ./examples/webhook-receiver > /tmp/webhook.log 2>&1 &
+WEBHOOK_PID=$!
+sleep 1
+
+# Start emulator
+cd /Users/dayna.blackwell/code/gcp-eventarc-emulator && go run ./cmd/server-dual > /tmp/emulator.log 2>&1 &
+EMULATOR_PID=$!
+sleep 2
+
+BASE="http://localhost:8085/v1/projects/my-project/locations/us-central1"
+
+# Create a channel to publish into
+curl -s -X POST "$BASE/channels?channelId=publish-channel" \
+  -H "Content-Type: application/json" \
+  -d '{}'
+
+# Create a trigger that routes Pub/Sub events to the webhook receiver
+curl -s -X POST "$BASE/triggers?triggerId=publish-trigger" \
   -H "Content-Type: application/json" \
   -d '{
     "eventFilters": [
@@ -118,88 +251,16 @@ curl -s -X POST "http://localhost:8085/v1/projects/my-project/locations/us-centr
     "destination": {
       "httpEndpoint": {"uri": "http://localhost:3000/events"}
     }
-  }' | python3 -m json.tool
+  }'
 
-curl -s "http://localhost:8085/v1/projects/my-project/locations/us-central1/triggers" | python3 -m json.tool
-
-curl -s "http://localhost:8085/v1/projects/my-project/locations/us-central1/triggers/pubsub-trigger" | python3 -m json.tool
-```
-
-**Trigger — update:**
-```bash
-curl -s -X PATCH "http://localhost:8085/v1/projects/my-project/locations/us-central1/triggers/pubsub-trigger" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "labels": {"env": "local"}
-  }' | python3 -m json.tool
-```
-
-**Message buses:**
-```bash
-curl -s -X POST "http://localhost:8085/v1/projects/my-project/locations/us-central1/messageBuses?messageBusId=my-bus" \
-  -H "Content-Type: application/json" \
-  -d '{}' | python3 -m json.tool
-
-curl -s "http://localhost:8085/v1/projects/my-project/locations/us-central1/messageBuses" | python3 -m json.tool
-```
-
-**Pipelines:**
-```bash
-curl -s -X POST "http://localhost:8085/v1/projects/my-project/locations/us-central1/pipelines?pipelineId=my-pipeline" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "destinations": [
-      {"httpEndpoint": {"uri": "http://localhost:3000/pipeline"}}
-    ]
-  }' | python3 -m json.tool
-
-curl -s "http://localhost:8085/v1/projects/my-project/locations/us-central1/pipelines" | python3 -m json.tool
-```
-
-**Enrollments:**
-```bash
-curl -s -X POST "http://localhost:8085/v1/projects/my-project/locations/us-central1/enrollments?enrollmentId=my-enrollment" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "celMatch": "message.type == '\''google.cloud.pubsub.topic.v1.messagePublished'\''",
-    "messageBus": "projects/my-project/locations/us-central1/messageBuses/my-bus",
-    "destination": "projects/my-project/locations/us-central1/pipelines/my-pipeline"
-  }' | python3 -m json.tool
-
-curl -s "http://localhost:8085/v1/projects/my-project/locations/us-central1/enrollments" | python3 -m json.tool
-```
-
-**Google Channel Config (singleton):**
-```bash
-curl -s "http://localhost:8085/v1/projects/my-project/locations/us-central1/googleChannelConfig" | python3 -m json.tool
-```
-
-**Long-Running Operations:**
-```bash
-curl -s "http://localhost:8085/v1/projects/my-project/locations/us-central1/operations" | python3 -m json.tool
-```
-
----
-
-### 4. Event Publishing and Delivery — end-to-end routing
-
-Start a webhook receiver to observe event delivery. In a new background process:
-
-```bash
-go run ./examples/webhook-receiver/main.go &
-sleep 1
-```
-
-Publish a CloudEvent that matches the pubsub-trigger created in area 3:
-
-```bash
-curl -s -X POST "http://localhost:8085/v1/projects/my-project/locations/us-central1/channels/my-channel:publishEvents" \
+# Publish a matching CloudEvent
+curl -s -w "\nHTTP %{http_code}\n" -X POST "$BASE/channels/publish-channel:publishEvents" \
   -H "Content-Type: application/json" \
   -d '{
     "events": [
       {
         "@type": "type.googleapis.com/google.cloud.eventarc.publishing.v1.CloudEvent",
-        "id": "evt-001",
+        "id": "audit-evt-001",
         "source": "//pubsub.googleapis.com/projects/my-project/topics/my-topic",
         "specVersion": "1.0",
         "type": "google.cloud.pubsub.topic.v1.messagePublished",
@@ -210,274 +271,546 @@ curl -s -X POST "http://localhost:8085/v1/projects/my-project/locations/us-centr
         "textData": "{\"subscription\":\"projects/my-project/subscriptions/my-sub\",\"message\":{\"data\":\"SGVsbG8gZnJvbSBFdmVudGFyYyE=\"}}"
       }
     ]
-  }' | python3 -m json.tool
-```
+  }'
 
-Check that the webhook receiver (running in the background) logged the delivered event with Ce-* headers in its stdout.
+sleep 1
 
-Publish a second event with a non-matching type (should NOT be delivered to pubsub-trigger):
-```bash
-curl -s -X POST "http://localhost:8085/v1/projects/my-project/locations/us-central1/channels/my-channel:publishEvents" \
+# Check webhook received the event with Ce-* headers
+cat /tmp/webhook.log
+
+# Now publish a NON-matching event type — should NOT reach the webhook
+curl -s -w "\nHTTP %{http_code}\n" -X POST "$BASE/channels/publish-channel:publishEvents" \
   -H "Content-Type: application/json" \
   -d '{
     "events": [
       {
         "@type": "type.googleapis.com/google.cloud.eventarc.publishing.v1.CloudEvent",
-        "id": "evt-002",
-        "source": "//storage.googleapis.com/projects/my-project/buckets/my-bucket",
+        "id": "audit-evt-002",
+        "source": "//test.source",
         "specVersion": "1.0",
-        "type": "google.cloud.storage.object.v1.finalized",
-        "textData": "{}"
+        "type": "test.unmatched.event.v1",
+        "textData": "this should not be delivered"
       }
     ]
-  }' | python3 -m json.tool
+  }'
+
+sleep 1
+echo "Webhook log after non-matching event (should show no new entry):"
+cat /tmp/webhook.log
+
+kill $EMULATOR_PID $WEBHOOK_PID
 ```
 
-Note: Does the API give feedback about whether routing occurred? Does the response body differ between matched and unmatched events?
+Note:
+- Does the publishEvents call return HTTP 200?
+- Does the webhook log show all expected Ce-* headers: Ce-Type, Ce-Source, Ce-Id, Ce-Specversion, Ce-Subject?
+- Is the event payload in the body as valid JSON?
+- Does the non-matching event type produce no new webhook entry (proving routing works correctly)?
 
 ---
 
-### 5. SDK Demo — Go SDK integration
+### 6. Channel Validation — Publishing to Nonexistent Channel
 
-The sdk-demo uses the official GCP Go SDK against the emulator (no GCP credentials required). It needs a channel named `my-channel` to exist and a webhook receiver at `http://localhost:3000/events`.
+Verify that publishing to a channel that does not exist returns a clear NOT_FOUND error.
 
-Ensure server and webhook receiver are still running from previous areas, then run:
+```
+cd /Users/dayna.blackwell/code/gcp-eventarc-emulator && go run ./cmd/server-dual > /tmp/emulator.log 2>&1 &
+sleep 2
 
-```bash
+curl -s -w "\nHTTP %{http_code}\n" -X POST \
+  "http://localhost:8085/v1/projects/my-project/locations/us-central1/channels/does-not-exist:publishEvents" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "events": [
+      {
+        "@type": "type.googleapis.com/google.cloud.eventarc.publishing.v1.CloudEvent",
+        "id": "bad-evt-001",
+        "source": "//test.source",
+        "specVersion": "1.0",
+        "type": "test.event.v1",
+        "textData": "hello"
+      }
+    ]
+  }'
+
+kill %1 2>/dev/null
+```
+
+Note:
+- Is the HTTP status 404?
+- Does the response body include a gRPC status code (5 = NOT_FOUND) and a human-readable message?
+- Does the error identify which channel was not found by name?
+- Would a new user understand what went wrong from this response alone?
+
+---
+
+### 7. Trigger Validation — Creating Without Required Fields
+
+Verify that creating a trigger without a destination, creating a duplicate, or supplying an empty parent returns a clear INVALID_ARGUMENT or ALREADY_EXISTS error.
+
+```
+cd /Users/dayna.blackwell/code/gcp-eventarc-emulator && go run ./cmd/server-dual > /tmp/emulator.log 2>&1 &
+sleep 2
+
+BASE="http://localhost:8085/v1/projects/my-project/locations/us-central1"
+
+# Create trigger with no destination field
+curl -s -w "\nHTTP %{http_code}\n" -X POST "$BASE/triggers?triggerId=bad-trigger-1" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "eventFilters": [
+      {"attribute": "type", "value": "google.cloud.pubsub.topic.v1.messagePublished"}
+    ]
+  }'
+
+# Create trigger with completely empty body
+curl -s -w "\nHTTP %{http_code}\n" -X POST "$BASE/triggers?triggerId=bad-trigger-2" \
+  -H "Content-Type: application/json" \
+  -d '{}'
+
+# Create trigger with missing triggerId query param
+curl -s -w "\nHTTP %{http_code}\n" -X POST "$BASE/triggers" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "eventFilters": [{"attribute": "type", "value": "test.event.v1"}],
+    "destination": {"httpEndpoint": {"uri": "http://localhost:3000/webhook"}}
+  }'
+
+# Create a valid trigger then try to create it again (duplicate)
+curl -s -X POST "$BASE/triggers?triggerId=dup-trigger" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "eventFilters": [{"attribute": "type", "value": "test.event.v1"}],
+    "destination": {"httpEndpoint": {"uri": "http://localhost:3000/webhook"}}
+  }'
+curl -s -w "\nHTTP %{http_code}\n" -X POST "$BASE/triggers?triggerId=dup-trigger" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "eventFilters": [{"attribute": "type", "value": "test.event.v1"}],
+    "destination": {"httpEndpoint": {"uri": "http://localhost:3000/webhook"}}
+  }'
+
+kill %1 2>/dev/null
+```
+
+Note:
+- Does missing destination return 400 / INVALID_ARGUMENT? Does the error name the missing field?
+- Does missing triggerId return an error? Which one?
+- Does the duplicate trigger return 409 / ALREADY_EXISTS?
+- Are error responses structured as `{"code": N, "message": "...", "status": "..."}` (gRPC-gateway convention)?
+
+---
+
+### 8. gRPC API — Core Operations via grpcurl
+
+Verify the gRPC surface is accessible, reflection is enabled, and core operations work.
+
+```
+cd /Users/dayna.blackwell/code/gcp-eventarc-emulator && go run ./cmd/server-dual > /tmp/emulator.log 2>&1 &
+sleep 2
+
+# Check if grpcurl is available
+which grpcurl || echo "grpcurl not found — install: go install github.com/fullstorydev/grpcurl/cmd/grpcurl@latest"
+
+# List services via gRPC server reflection
+grpcurl -plaintext localhost:9085 list
+
+# List methods on the Eventarc service
+grpcurl -plaintext localhost:9085 list google.cloud.eventarc.v1.Eventarc
+
+# List providers via gRPC
+grpcurl -plaintext \
+  -d '{"parent":"projects/my-project/locations/us-central1"}' \
+  localhost:9085 google.cloud.eventarc.v1.Eventarc/ListProviders
+
+# Create a trigger via gRPC
+grpcurl -plaintext \
+  -d '{
+    "parent": "projects/my-project/locations/us-central1",
+    "trigger_id": "grpc-audit-trigger",
+    "trigger": {
+      "event_filters": [{"attribute": "type", "value": "test.grpc.event.v1"}],
+      "destination": {"http_endpoint": {"uri": "http://localhost:3000/webhook"}}
+    }
+  }' \
+  localhost:9085 google.cloud.eventarc.v1.Eventarc/CreateTrigger
+
+# Get the trigger back via gRPC
+grpcurl -plaintext \
+  -d '{"name":"projects/my-project/locations/us-central1/triggers/grpc-audit-trigger"}' \
+  localhost:9085 google.cloud.eventarc.v1.Eventarc/GetTrigger
+
+# List triggers via gRPC
+grpcurl -plaintext \
+  -d '{"parent":"projects/my-project/locations/us-central1"}' \
+  localhost:9085 google.cloud.eventarc.v1.Eventarc/ListTriggers
+
+# Delete the trigger via gRPC
+grpcurl -plaintext \
+  -d '{"name":"projects/my-project/locations/us-central1/triggers/grpc-audit-trigger"}' \
+  localhost:9085 google.cloud.eventarc.v1.Eventarc/DeleteTrigger
+
+# List Publisher service methods
+grpcurl -plaintext localhost:9085 list google.cloud.eventarc.publishing.v1.Publisher
+
+# List Operations service methods
+grpcurl -plaintext localhost:9085 list google.longrunning.Operations
+
+kill %1 2>/dev/null
+```
+
+Note:
+- Is gRPC reflection enabled? (`grpcurl list` must work without a .proto file.)
+- Do gRPC field names use snake_case as expected (e.g., `event_filters`, `http_endpoint`)?
+- Is the LRO in CreateTrigger's response marked `done: true` with the trigger embedded in `response`?
+- Are the Publisher and Operations services listed alongside Eventarc?
+
+---
+
+### 9. SDK Demo
+
+Run the Go SDK demo end-to-end using the real `cloud.google.com/go/eventarc` client library. The webhook receiver must be running to catch the dispatched event. Note: the sdk-demo publishes to a channel named `my-channel` which it does not create itself — create it via REST first.
+
+```
+# Start webhook receiver
+cd /Users/dayna.blackwell/code/gcp-eventarc-emulator && go run ./examples/webhook-receiver > /tmp/webhook-sdk.log 2>&1 &
+WEBHOOK_PID=$!
+sleep 1
+
+# Start emulator
+cd /Users/dayna.blackwell/code/gcp-eventarc-emulator && go run ./cmd/server-dual > /tmp/emulator-sdk.log 2>&1 &
+EMULATOR_PID=$!
+sleep 2
+
+# Create the channel the sdk-demo will publish into (my-channel)
+curl -s -X POST \
+  "http://localhost:8085/v1/projects/my-project/locations/us-central1/channels?channelId=my-channel" \
+  -H "Content-Type: application/json" \
+  -d '{}'
+
+# Run the SDK demo
 cd /Users/dayna.blackwell/code/gcp-eventarc-emulator/examples/sdk-demo && \
   EVENTARC_EMULATOR_HOST=localhost:9085 \
   WEBHOOK_URI=http://localhost:3000/events \
   go run main.go
+
+# Check the webhook receiver log for a delivered CloudEvent with Ce-* headers
+cat /tmp/webhook-sdk.log
+
+kill $EMULATOR_PID $WEBHOOK_PID
 ```
 
-Note: Does the output clearly label each step? Does it show LRO wait behavior? Are error messages from the SDK helpful when things go wrong?
+Note:
+- Does the SDK demo run to completion with exit 0?
+- Are all 8 steps (List providers, Get provider, Create trigger, Get trigger, List triggers, Update trigger, Publish, Delete trigger) printed?
+- Does the webhook log show the dispatched event with Ce-* headers?
+- Is there any step in the sdk-demo that fails silently without surfacing the error to the user (via `must()`)?
+- Does the README sdk-demo usage section accurately reflect what's needed (e.g., the need to pre-create `my-channel`)?
 
 ---
 
-### 6. Docker — Container-based workflow
+### 10. Env Vars — EVENTARC_EMULATOR_TOKEN and IAM_MODE
 
-Stop any background processes from prior areas first, then test the Docker workflow from scratch:
+**Token injection (EVENTARC_EMULATOR_TOKEN):**
 
-```bash
-docker compose up -d
-sleep 5
 ```
+# Start webhook receiver
+cd /Users/dayna.blackwell/code/gcp-eventarc-emulator && go run ./examples/webhook-receiver > /tmp/webhook-token.log 2>&1 &
+WEBHOOK_PID=$!
+sleep 1
 
-Verify both containers started:
-```bash
-docker compose ps
-docker compose logs emulator
-docker compose logs webhook
-```
-
-Run the demo script (which exercises the full REST API against the Docker environment):
-```bash
-./examples/demo.sh
-```
-
-After the demo runs, inspect the webhook logs to confirm event delivery:
-```bash
-docker compose logs webhook
-```
-
-Tear down:
-```bash
-docker compose down
-```
-
-Note: Does `demo.sh` have clear output indicating each step? Are errors actionable? Does `docker compose logs webhook` show clean Ce-* header formatting?
-
----
-
-### 7. Env Var Configuration — Runtime behavior via environment
-
-Test the bearer token dispatch header:
-
-```bash
-EVENTARC_EMULATOR_TOKEN=my-test-token go run ./cmd/server-dual &
+# Start emulator with a bearer token
+cd /Users/dayna.blackwell/code/gcp-eventarc-emulator && \
+  EVENTARC_EMULATOR_TOKEN=my-secret-test-token \
+  go run ./cmd/server-dual > /tmp/emulator-token.log 2>&1 &
+EMULATOR_PID=$!
 sleep 2
-```
 
-Create a trigger pointing to the local webhook receiver:
-```bash
-curl -s -X POST "http://localhost:8085/v1/projects/test/locations/us-central1/triggers?triggerId=token-trigger" \
+BASE="http://localhost:8085/v1/projects/my-project/locations/us-central1"
+
+curl -s -X POST "$BASE/channels?channelId=token-channel" -H "Content-Type: application/json" -d '{}'
+
+curl -s -X POST "$BASE/triggers?triggerId=token-trigger" \
   -H "Content-Type: application/json" \
   -d '{
-    "eventFilters": [{"attribute": "type", "value": "google.cloud.pubsub.topic.v1.messagePublished"}],
+    "eventFilters": [{"attribute": "type", "value": "test.token.event.v1"}],
     "destination": {"httpEndpoint": {"uri": "http://localhost:3000/events"}}
-  }' | python3 -m json.tool
-```
-
-Publish an event and check the webhook receiver logs for the Authorization header:
-```bash
-curl -s -X POST "http://localhost:8085/v1/projects/test/locations/us-central1/channels/my-channel:publishEvents" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "events": [
-      {
-        "@type": "type.googleapis.com/google.cloud.eventarc.publishing.v1.CloudEvent",
-        "id": "token-test-evt",
-        "source": "//pubsub.googleapis.com/projects/test/topics/t",
-        "specVersion": "1.0",
-        "type": "google.cloud.pubsub.topic.v1.messagePublished",
-        "textData": "{}"
-      }
-    ]
-  }' | python3 -m json.tool
-```
-
-Kill the server and check IAM mode env var (no IAM emulator present — should fail with strict):
-```bash
-kill %1
-IAM_MODE=strict go run ./cmd/server-dual &
-sleep 2
-curl -s http://localhost:8085/v1/projects/test/locations/us-central1/triggers
-kill %1
-```
-
-Note: Does the server log or error message explain why the request was denied in strict mode without an IAM emulator? Is the IAM mode documented at startup?
-
----
-
-### 8. Destructive Operations — Delete and cleanup
-
-With the server running and resources from area 3 still present (or recreated):
-
-**Delete a trigger:**
-```bash
-curl -s -X DELETE "http://localhost:8085/v1/projects/my-project/locations/us-central1/triggers/pubsub-trigger" | python3 -m json.tool
-```
-
-**Verify deletion (should return 404 or empty):**
-```bash
-curl -s "http://localhost:8085/v1/projects/my-project/locations/us-central1/triggers/pubsub-trigger"
-```
-
-**Delete a channel:**
-```bash
-curl -s -X DELETE "http://localhost:8085/v1/projects/my-project/locations/us-central1/channels/my-channel" | python3 -m json.tool
-```
-
-**Delete a pipeline:**
-```bash
-curl -s -X DELETE "http://localhost:8085/v1/projects/my-project/locations/us-central1/pipelines/my-pipeline" | python3 -m json.tool
-```
-
-**Delete an enrollment:**
-```bash
-curl -s -X DELETE "http://localhost:8085/v1/projects/my-project/locations/us-central1/enrollments/my-enrollment" | python3 -m json.tool
-```
-
-**Delete a message bus:**
-```bash
-curl -s -X DELETE "http://localhost:8085/v1/projects/my-project/locations/us-central1/messageBuses/my-bus" | python3 -m json.tool
-```
-
-Note: Delete operations return LROs — does the response format make it obvious the operation succeeded? What does a second delete of the same resource return?
-
-**Delete an already-deleted resource (idempotency check):**
-```bash
-curl -s -X DELETE "http://localhost:8085/v1/projects/my-project/locations/us-central1/triggers/pubsub-trigger"
-```
-
----
-
-### 9. Error Handling and Edge Cases
-
-**No arguments (bare binary):**
-```bash
-go run ./cmd/server-dual
-```
-(should start normally, not error — but note what the startup UX looks like without flags)
-
-**Unknown flag:**
-```bash
-go run ./cmd/server-dual --blorp
-```
-
-**Invalid log level:**
-```bash
-go run ./cmd/server-dual --log-level verbose
-```
-
-**Malformed JSON body:**
-```bash
-curl -s -X POST "http://localhost:8085/v1/projects/test/locations/us-central1/triggers?triggerId=bad" \
-  -H "Content-Type: application/json" \
-  -d 'not-json'
-```
-
-**Missing required fields (trigger with no eventFilters or destination):**
-```bash
-curl -s -X POST "http://localhost:8085/v1/projects/test/locations/us-central1/triggers?triggerId=empty-trigger" \
-  -H "Content-Type: application/json" \
-  -d '{}'
-```
-
-**Missing triggerId query param:**
-```bash
-curl -s -X POST "http://localhost:8085/v1/projects/test/locations/us-central1/triggers" \
-  -H "Content-Type: application/json" \
-  -d '{"eventFilters": [{"attribute": "type", "value": "foo"}], "destination": {"httpEndpoint": {"uri": "http://localhost:3000"}}}'
-```
-
-**Nonexistent resource (GET):**
-```bash
-curl -s "http://localhost:8085/v1/projects/test/locations/us-central1/triggers/does-not-exist"
-```
-
-**Nonexistent provider:**
-```bash
-curl -s "http://localhost:8085/v1/projects/test/locations/us-central1/providers/nonexistent.provider.com"
-```
-
-**Publish to a nonexistent channel:**
-```bash
-curl -s -X POST "http://localhost:8085/v1/projects/test/locations/us-central1/channels/no-such-channel:publishEvents" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "events": [
-      {
-        "@type": "type.googleapis.com/google.cloud.eventarc.publishing.v1.CloudEvent",
-        "id": "x", "source": "//test", "specVersion": "1.0", "type": "test.event", "textData": "{}"
-      }
-    ]
   }'
+
+curl -s -X POST "$BASE/channels/token-channel:publishEvents" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "events": [{
+      "@type": "type.googleapis.com/google.cloud.eventarc.publishing.v1.CloudEvent",
+      "id": "token-evt-001",
+      "source": "//test.source",
+      "specVersion": "1.0",
+      "type": "test.token.event.v1",
+      "textData": "hello token"
+    }]
+  }'
+
+sleep 1
+
+# Webhook log should show: Authorization: Bearer my-secret-test-token
+cat /tmp/webhook-token.log
+
+kill $EMULATOR_PID $WEBHOOK_PID
 ```
 
-**Wrong HTTP method:**
-```bash
-curl -s -X GET "http://localhost:8085/v1/projects/test/locations/us-central1/triggers" -X DELETE
-curl -s -X PUT "http://localhost:8085/v1/projects/test/locations/us-central1/triggers"
+**IAM permissive mode (no IAM emulator running):**
+
 ```
+cd /Users/dayna.blackwell/code/gcp-eventarc-emulator && \
+  IAM_MODE=permissive \
+  go run ./cmd/server-dual > /tmp/emulator-iam-permissive.log 2>&1 &
+EMULATOR_PID=$!
+sleep 2
+
+# Request without a principal — README says "Deny" in permissive mode without a principal
+curl -s -w "\nHTTP %{http_code}\n" \
+  "http://localhost:8085/v1/projects/my-project/locations/us-central1/triggers"
+
+cat /tmp/emulator-iam-permissive.log
+
+kill $EMULATOR_PID
+```
+
+**IAM strict mode (no IAM emulator running):**
+
+```
+cd /Users/dayna.blackwell/code/gcp-eventarc-emulator && \
+  IAM_MODE=strict \
+  go run ./cmd/server-dual > /tmp/emulator-iam-strict.log 2>&1 &
+EMULATOR_PID=$!
+sleep 2
+
+# README says: strict + IAM unavailable = Deny
+curl -s -w "\nHTTP %{http_code}\n" \
+  "http://localhost:8085/v1/projects/my-project/locations/us-central1/triggers"
+
+cat /tmp/emulator-iam-strict.log
+
+kill $EMULATOR_PID
+```
+
+Note:
+- Does the webhook log show `Authorization: Bearer my-secret-test-token` when the env var is set?
+- Does the startup log indicate which IAM_MODE is active?
+- In permissive mode with no IAM emulator, does behavior match the README table (Allow when IAM unavailable)?
+- In strict mode with no IAM emulator, are requests denied? Is the error response clear?
+- Does `IAM_MODE` vs `EVENTARC_EMULATOR_IAM_MODE` naming match — README uses `IAM_MODE` but the user prompt says `EVENTARC_EMULATOR_IAM_MODE`. Which is correct?
 
 ---
 
-### 10. Output Review — Formatting and consistency
+### 11. Log Level Flag
 
-Re-run key commands and evaluate output quality:
+Verify the `--log-level` flag and `GCP_MOCK_LOG_LEVEL` env var work correctly, and that invalid values fail cleanly.
 
-```bash
+```
+# Debug level — should be verbose
+cd /Users/dayna.blackwell/code/gcp-eventarc-emulator && \
+  go run ./cmd/server-dual --log-level debug > /tmp/emulator-debug.log 2>&1 &
+EMULATOR_PID=$!
+sleep 2
+
+curl -s "http://localhost:8085/v1/projects/my-project/locations/us-central1/triggers"
+
+kill $EMULATOR_PID
+cat /tmp/emulator-debug.log
+
+# Error level — should be very quiet
+cd /Users/dayna.blackwell/code/gcp-eventarc-emulator && \
+  GCP_MOCK_LOG_LEVEL=error \
+  go run ./cmd/server-dual > /tmp/emulator-error.log 2>&1 &
+EMULATOR_PID=$!
+sleep 2
+
+curl -s "http://localhost:8085/v1/projects/my-project/locations/us-central1/triggers"
+
+kill $EMULATOR_PID
+cat /tmp/emulator-error.log
+
+# Invalid log level — should fail at startup
+cd /Users/dayna.blackwell/code/gcp-eventarc-emulator && \
+  go run ./cmd/server-dual --log-level banana > /tmp/emulator-invalid-loglevel.log 2>&1
+echo "Exit: $?"
+cat /tmp/emulator-invalid-loglevel.log
+
+# Conflict: both flag and env var set — which wins?
+cd /Users/dayna.blackwell/code/gcp-eventarc-emulator && \
+  GCP_MOCK_LOG_LEVEL=error \
+  go run ./cmd/server-dual --log-level debug > /tmp/emulator-conflict.log 2>&1 &
+EMULATOR_PID=$!
+sleep 2
+curl -s "http://localhost:8085/v1/projects/my-project/locations/us-central1/triggers"
+kill $EMULATOR_PID
+cat /tmp/emulator-conflict.log
+```
+
+Note:
+- Does `--log-level debug` produce significantly more output than the default `info`?
+- Is the log format structured (JSON) or plain text?
+- Does an invalid `--log-level` value produce an error and non-zero exit, or does it silently fall back?
+- When both `--log-level` flag and `GCP_MOCK_LOG_LEVEL` env var are set, which wins? Is this documented?
+
+---
+
+### 12. Edge Cases and Error Handling
+
+Test boundary behavior for both the server binary and the REST API.
+
+**Server binary edge cases:**
+
+```
+# Unknown flag — should print usage and exit non-zero
+cd /Users/dayna.blackwell/code/gcp-eventarc-emulator && \
+  go run ./cmd/server-dual --unknown-flag 2>&1; echo "Exit: $?"
+
+# Invalid port value — should fail at startup with a clear message
+cd /Users/dayna.blackwell/code/gcp-eventarc-emulator && \
+  go run ./cmd/server-dual --grpc-port notaport 2>&1; echo "Exit: $?"
+
+# Out-of-range port value
+cd /Users/dayna.blackwell/code/gcp-eventarc-emulator && \
+  go run ./cmd/server-dual --grpc-port 99999 2>&1; echo "Exit: $?"
+
+# Deprecated --port flag on server binary (should work but warn)
+cd /Users/dayna.blackwell/code/gcp-eventarc-emulator && \
+  go run ./cmd/server --port 9085 > /tmp/emulator-deprecated.log 2>&1 &
+EMULATOR_PID=$!
+sleep 2
+curl -s http://localhost:9085 2>&1 || true
+kill $EMULATOR_PID
+cat /tmp/emulator-deprecated.log
+```
+
+**REST API edge cases:**
+
+```
+cd /Users/dayna.blackwell/code/gcp-eventarc-emulator && go run ./cmd/server-dual > /tmp/emulator.log 2>&1 &
+sleep 2
+
+# GET nonexistent trigger
+curl -s -w "\nHTTP %{http_code}\n" \
+  "http://localhost:8085/v1/projects/my-project/locations/us-central1/triggers/does-not-exist"
+
+# GET nonexistent channel
+curl -s -w "\nHTTP %{http_code}\n" \
+  "http://localhost:8085/v1/projects/my-project/locations/us-central1/channels/does-not-exist"
+
+# GET nonexistent operation
+curl -s -w "\nHTTP %{http_code}\n" \
+  "http://localhost:8085/v1/operations/does-not-exist"
+
+# DELETE nonexistent trigger
+curl -s -w "\nHTTP %{http_code}\n" -X DELETE \
+  "http://localhost:8085/v1/projects/my-project/locations/us-central1/triggers/does-not-exist"
+
+# Malformed JSON body
+curl -s -w "\nHTTP %{http_code}\n" -X POST \
+  "http://localhost:8085/v1/projects/my-project/locations/us-central1/triggers?triggerId=malformed" \
+  -H "Content-Type: application/json" \
+  -d 'this is not json'
+
+# POST with no Content-Type header
+curl -s -w "\nHTTP %{http_code}\n" -X POST \
+  "http://localhost:8085/v1/projects/my-project/locations/us-central1/triggers?triggerId=no-ct" \
+  -d '{"eventFilters":[],"destination":{"httpEndpoint":{"uri":"http://localhost:3000"}}}'
+
+# Totally unknown path
+curl -s -w "\nHTTP %{http_code}\n" "http://localhost:8085/totally/unknown/path"
+
+# No arguments to the server binary (should start with defaults, not print help)
+cd /Users/dayna.blackwell/code/gcp-eventarc-emulator && go run ./cmd/server-dual &
+sleep 2
+kill %1 2>/dev/null
+
+kill %1 2>/dev/null
+```
+
+Note:
+- Are all NOT_FOUND responses the same JSON structure?
+- Is the malformed JSON error actionable (does it point to the parse problem location)?
+- Does an unknown path return 404 with a gRPC-gateway error body, or something else?
+- Does deleting a nonexistent resource return 404 (NOT_FOUND) or silently succeed (200)?
+- Does the deprecated `--port` flag on `server` log a deprecation warning at startup?
+
+---
+
+### 13. Test Suite
+
+Run the test suite to see what baseline coverage exists and whether tests pass cleanly.
+
+```
+# Unit tests only (fast)
+cd /Users/dayna.blackwell/code/gcp-eventarc-emulator && go test ./internal/... -v 2>&1 | tail -50
+
+# Integration tests
+cd /Users/dayna.blackwell/code/gcp-eventarc-emulator && go test -v -run TestIntegration ./... 2>&1
+
+# Full suite with race detector
+cd /Users/dayna.blackwell/code/gcp-eventarc-emulator && go test -race ./... 2>&1 | tail -20
+```
+
+Note:
+- Do all tests pass?
+- Are test names descriptive enough that a new user can understand what they cover?
+- Is there a `make test` or similar convenience target in the Makefile?
+- Is it clear from the README how to run just unit vs. integration tests?
+
+---
+
+### 14. Output Review
+
+Evaluate the visual quality and consistency of all output across the tool.
+
+```
+cd /Users/dayna.blackwell/code/gcp-eventarc-emulator && go run ./cmd/server-dual --help
+cd /Users/dayna.blackwell/code/gcp-eventarc-emulator && go run ./cmd/server --help
+cd /Users/dayna.blackwell/code/gcp-eventarc-emulator && go run ./cmd/server-rest --help
+```
+
+With server running:
+
+```
+cd /Users/dayna.blackwell/code/gcp-eventarc-emulator && go run ./cmd/server-dual > /tmp/emulator-output.log 2>&1 &
+sleep 2
+
+# Review formatted JSON output for each resource type
 curl -s "http://localhost:8085/v1/projects/my-project/locations/us-central1/providers" | python3 -m json.tool
 curl -s "http://localhost:8085/v1/projects/my-project/locations/us-central1/triggers" | python3 -m json.tool
-curl -s "http://localhost:8085/v1/projects/my-project/locations/us-central1/channels" | python3 -m json.tool
-curl -s "http://localhost:8085/v1/projects/my-project/locations/us-central1/messageBuses" | python3 -m json.tool
-curl -s "http://localhost:8085/v1/projects/my-project/locations/us-central1/pipelines" | python3 -m json.tool
+
+# Create and inspect a trigger response
+curl -s -X POST \
+  "http://localhost:8085/v1/projects/my-project/locations/us-central1/triggers?triggerId=output-review" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "eventFilters": [{"attribute": "type", "value": "test.event.v1"}],
+    "destination": {"httpEndpoint": {"uri": "http://localhost:3000/webhook"}}
+  }' | python3 -m json.tool
+
+# Inspect startup log format
+cat /tmp/emulator-output.log
+
+kill %1 2>/dev/null
 ```
 
-Assess:
-- JSON field naming: camelCase vs snake_case consistency
-- LRO response format: are `name`, `done`, `response`, `metadata` fields present and meaningful?
-- Empty list response: `{}` vs `{"triggers": []}` — which does the API return?
-- Error response format: is there a `code`, `message`, `status` structure (gRPC status style)?
-- Server startup logs: are port bindings clearly stated? Is there a "ready" message?
-- `demo.sh` colored output: step labels in cyan, success ticks in green, info in yellow — is the color scheme readable and consistent?
+Evaluate:
+- Is the server startup log readable? Does it include timestamps, log level labels, and port numbers?
+- Are REST JSON responses pretty-printed or minified by default?
+- Is field naming in JSON consistently camelCase (matching GCP API conventions)?
+- Do error responses use the same `{"code": N, "message": "...", "status": "..."}` envelope everywhere?
+- Is there any color in the server output? Is color appropriate for a server log?
+- Is the `--help` layout easy to scan? Are env vars clearly separated from flags?
+- Is terminology consistent between the README, `--help` text, and API response field names (e.g., "IAM_MODE" vs "EVENTARC_EMULATOR_IAM_MODE")?
+- Do the three server variants' `--help` texts call out their differences clearly enough that a new user can choose the right one?
 
 ---
 
 Run ALL commands listed. Do not skip areas.
 Note exact output, errors, exit codes, and behavior at each step.
-Describe what the server logs show during each operation.
+Describe color usage (e.g. "server startup logs appear in plain text with no color; REST responses are minified JSON").
 
 You are not trying to find every possible issue — you are discovering what friction a new user would naturally encounter by following the help text and trying obvious commands.
 
@@ -502,6 +835,6 @@ Severity guide:
 - Include a summary table at the top: total count by severity
 - Write the complete report to docs/cold-start-audit.md using the Write tool
 
-IMPORTANT: Run ALL commands from the project root `/Users/dayna.blackwell/code/gcp-eventarc-emulator`.
-Do not bypass the sandbox — do not run the emulator against production GCP state.
-All state is in-memory and resets when the server process is killed.
+IMPORTANT: Run ALL commands from the project root: `cd /Users/dayna.blackwell/code/gcp-eventarc-emulator && <command>`.
+Do not bypass the sandbox — do not run the emulator against any external GCP project or production state.
+All state is in-memory; restart the server fresh for each area that requires it.

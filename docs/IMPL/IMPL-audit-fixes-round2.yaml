@@ -1,0 +1,1113 @@
+title: Audit Fixes Round 2 — Cold-Start UX Regression Fixes
+feature_slug: audit-fixes-round2
+verdict: SUITABLE
+suitability_assessment: |
+    All 26 findings from the cold-start audit are addressable with parallel agents.
+    File decomposition is clean: the codebase has distinct layers (gateway, server,
+    lro, dispatcher, publisher, router, cmd mains, examples) that map naturally to
+    disjoint agent ownership.
+
+    Pre-implementation status check:
+    - C7 (I7 in the finding list) — Ce-Time header: DONE. dispatcher/http.go already
+      sets Ce-Time when event.Time().IsZero() is false (lines 83-85). No fix needed.
+      This finding was based on a test where the time attribute may not have been set
+      in the publish payload correctly.
+    - All other findings confirmed TODO via source inspection.
+
+    Parallelization value: HIGH. Go build+test cycle is moderate (~5-10s). Agents own
+    2-5 files each. Wave 1 has 4 fully independent agents. Estimated 2x speedup over
+    sequential.
+
+    Estimated times:
+    - Scout phase: ~15 min (26 findings, multi-file analysis)
+    - Agent execution: ~60 min (7 agents x ~15 min avg, accounting for 2-wave sequencing)
+    - Merge and verification: ~10 min
+    Total SAW time: ~85 min
+
+    Sequential baseline: ~175 min (7 agents x 25 min avg)
+    Time savings: ~90 min (~50% faster)
+
+    Recommendation: Clear speedup. Proceed.
+test_command: go test ./...
+lint_command: go vet ./...
+file_ownership:
+    - file: internal/gateway/gateway.go
+      agent: A
+      wave: 1
+      action: modify
+    - file: internal/server/server.go
+      agent: B
+      wave: 1
+      action: modify
+    - file: internal/server/server_test.go
+      agent: B
+      wave: 1
+      action: modify
+    - file: internal/lro/store_test.go
+      agent: B
+      wave: 1
+      action: modify
+    - file: examples/sdk-demo/main.go
+      agent: C
+      wave: 1
+      action: modify
+    - file: README.md
+      agent: C
+      wave: 1
+      action: modify
+    - file: cmd/server-dual/main.go
+      agent: C
+      wave: 1
+      action: modify
+    - file: cmd/server/main.go
+      agent: C
+      wave: 1
+      action: modify
+    - file: cmd/server-rest/main.go
+      agent: C
+      wave: 1
+      action: modify
+    - file: internal/logger/logger.go
+      agent: D
+      wave: 1
+      action: new
+    - file: internal/logger/logger_test.go
+      agent: D
+      wave: 1
+      action: new
+    - file: internal/dispatcher/http.go
+      agent: D
+      wave: 1
+      action: modify
+    - file: internal/dispatcher/http_test.go
+      agent: D
+      wave: 1
+      action: modify
+    - file: internal/publisher/server.go
+      agent: D
+      wave: 1
+      action: modify
+    - file: internal/router/router.go
+      agent: D
+      wave: 1
+      action: modify
+    - file: internal/router/router_test.go
+      agent: D
+      wave: 1
+      action: modify
+    - file: internal/gateway/gateway.go
+      agent: E
+      wave: 2
+      action: modify
+      depends_on:
+        - A
+    - file: cmd/server-dual/main.go
+      agent: F
+      wave: 2
+      action: modify
+      depends_on:
+        - C
+        - D
+    - file: cmd/server/main.go
+      agent: F
+      wave: 2
+      action: modify
+      depends_on:
+        - C
+        - D
+    - file: cmd/server-rest/main.go
+      agent: F
+      wave: 2
+      action: modify
+      depends_on:
+        - C
+        - D
+    - file: README.md
+      agent: G
+      wave: 2
+      action: modify
+      depends_on:
+        - C
+    - file: Makefile
+      agent: G
+      wave: 2
+      action: modify
+    - file: internal/lro/store.go
+      agent: G
+      wave: 2
+      action: modify
+      depends_on:
+        - B
+interface_contracts:
+    - name: logger.New
+      description: |
+        Leveled logger constructor used by dispatcher, publisher, and router.
+        All packages that need debug-level output accept a *logger.Logger parameter.
+        When nil is passed, constructors default to logger.New("info").
+      definition: |
+        func New(level string) *Logger
+
+        func (l *Logger) Debug(format string, args ...any)
+        func (l *Logger) Info(format string, args ...any)
+        func (l *Logger) Warn(format string, args ...any)
+        func (l *Logger) Error(format string, args ...any)
+        func (l *Logger) IsDebug() bool
+      location: internal/logger/logger.go
+    - name: dispatcher.NewDispatcher (updated signature)
+      description: |
+        NewDispatcher gains a variadic *logger.Logger parameter so existing call sites
+        (cmd mains, tests) compile without modification. Agent F wires the shared logger
+        in Wave 2 by passing it explicitly. If no logger is passed, defaults to
+        logger.New("info").
+      definition: |
+        func NewDispatcher(client *http.Client, log ...*logger.Logger) *Dispatcher
+        // internal: if len(log) > 0 && log[0] != nil { d.logger = log[0] } else { d.logger = logger.New("info") }
+      location: internal/dispatcher/http.go
+    - name: router.NewRouter (updated signature)
+      description: |
+        NewRouter gains a variadic *logger.Logger parameter. Existing zero-arg call
+        sites compile unchanged. Defaults to logger.New("info") when not provided.
+      definition: |
+        func NewRouter(storage StorageReader, log ...*logger.Logger) *Router
+      location: internal/router/router.go
+    - name: publisher.NewServer (updated signature)
+      description: |
+        NewServer gains a variadic *logger.Logger parameter. Existing 3-arg call
+        sites compile unchanged. Defaults to logger.New("info") when not provided.
+      definition: |
+        func NewServer(router RouterMatcher, dispatcher EventDispatcher, channels ChannelChecker, log ...*logger.Logger) *Server
+      location: internal/publisher/server.go
+    - name: lro.Store.CreateDone (delete call sites)
+      description: |
+        Signature is unchanged. All Delete* methods in server.go change their call
+        sites to pass &emptypb.Empty{} as the resource argument, so the LRO response
+        resolves to google.protobuf.Empty instead of the deleted resource proto.
+      definition: |
+        // Signature unchanged:
+        func (s *Store) CreateDone(parent string, resource proto.Message) (*longrunningpb.Operation, error)
+
+        // Delete callers now use:
+        //   return s.lro.CreateDone(parent, &emptypb.Empty{})
+      location: internal/lro/store.go
+    - name: LRO project-scoped HTTP routes
+      description: |
+        Additional route handlers registered in gateway.New() to cover project-scoped
+        LRO paths. The generated pb.gw.go only covers /v1/operations/** patterns;
+        LRO names use projects/P/locations/L/operations/ID format.
+      definition: |
+        // GET /v1/projects/{project}/locations/{location}/operations/{operation}
+        //   pathParams: project, location, operation
+        //   gRPC call: GetOperation(name="projects/{project}/locations/{location}/operations/{operation}")
+        //
+        // GET /v1/projects/{project}/locations/{location}/operations
+        //   pathParams: project, location
+        //   gRPC call: ListOperations(name="projects/{project}/locations/{location}")
+      location: internal/gateway/gateway.go
+waves:
+    - number: 1
+      agents:
+        - id: A
+          task: |
+            ## Agent A — LRO Project-Scoped REST Routes (C1 + C2)
+
+            ### Context
+            The gRPC-gateway generated file `internal/gen/google/longrunning/operations.pb.gw.go`
+            registers these HTTP patterns for the Operations service:
+            - pattern_Operations_ListOperations_0: GET /v1/operations (name=literal segment)
+            - pattern_Operations_GetOperation_0: GET /v1/operations/** (wildcard after /operations/)
+
+            LRO names are generated as `projects/P/locations/L/operations/ID` in
+            `internal/lro/store.go` (see CreateDone, line 53: `name := parent + "/operations/" + uuid`).
+            When a client follows the `name` field from a Create response and does:
+              GET /v1/projects/P/locations/L/operations/ID
+            the gateway returns NOT_FOUND because no pattern matches that path.
+
+            ### Root cause
+            The gateway only registers patterns under `/v1/operations/...`. The LRO names
+            use a project-scoped prefix. No pattern covers `/v1/projects/*/locations/*/operations/*`.
+
+            ### What to implement
+            In `internal/gateway/gateway.go`, import the longrunning client and register
+            additional HTTP routes on the mux after `RegisterOperationsHandlerClient`.
+
+            Store the Operations gRPC client in the Gateway struct or as a local in New():
+
+            ```go
+            opsClient := longrunninggw.NewOperationsClient(conn)
+            ```
+
+            Then register two new handlers using `mux.HandlePath`:
+
+            **Route 1 — GetOperation (project-scoped):**
+            ```go
+            mux.HandlePath("GET", "/v1/{name=projects/*/locations/*/operations/*}",
+                func(w http.ResponseWriter, r *http.Request, pathParams map[string]string) {
+                    name := pathParams["name"]
+                    // name = "projects/P/locations/L/operations/ID" (without /v1/ prefix)
+                    // but grpc-gateway HandlePath may include the full match — verify.
+                    // Reconstruct from individual params if needed:
+                    // name = fmt.Sprintf("projects/%s/locations/%s/operations/%s",
+                    //     pathParams["project"], pathParams["location"], pathParams["operation"])
+                    ctx := r.Context()
+                    op, err := opsClient.GetOperation(ctx, &longrunninggw.GetOperationRequest{Name: name})
+                    if err != nil {
+                        runtime.DefaultHTTPErrorHandler(ctx, mux, outboundMarshaler, w, r, err)
+                        return
+                    }
+                    // marshal and write op as JSON
+                })
+            ```
+
+            NOTE: `runtime.ServeMux.HandlePath` accepts Go template-style path patterns.
+            Check grpc-gateway v2 docs for the exact pattern syntax. If HandlePath does not
+            support wildcard patterns, use a custom net/http.Handler registered via
+            `mux.Handle(http.MethodGet, runtime.MustPattern(...), handler)` with the
+            appropriate pattern tokens.
+
+            A simpler approach that avoids grpc-gateway pattern complexity:
+            1. Keep the existing `RegisterOperationsHandlerClient` call unchanged.
+            2. Wrap the mux with a custom `http.Handler` in `gateway.go` that pre-processes
+               requests: if the path matches `/v1/projects/*/locations/*/operations[/*]`,
+               rewrite the URL to `/v1/operations[/{op-id}]` (stripping the project prefix)
+               and forward to the original mux. This works because `lro/store.go`'s
+               `GetOperation` does `strings.TrimPrefix(req.Name, "operations/")` and looks
+               up by the full project-scoped name.
+
+            Actually the cleanest approach given the existing code:
+            - The GetOperation gRPC handler receives the `name` field directly from the
+              HTTP path via `pathParams["name"]`.
+            - The pattern `GET /v1/operations/**` puts everything after `/v1/operations/`
+              into `name`. So a GET to `/v1/operations/projects/P/locations/L/operations/ID`
+              would work — but that's an ugly double path.
+            - Better: register a new mux pattern that captures the full path after /v1/
+              as the name. Use `runtime.NewPattern`:
+
+            ```go
+            // Pattern: GET /v1/projects/{project}/locations/{location}/operations/{op}
+            // Token sequence for runtime.NewPattern:
+            //   2=literal, 0=index into strings array
+            //   4,1,5,N = capture N segments into param at strings[N]
+            patternGetProjectOp := runtime.MustPattern(runtime.NewPattern(
+                1, // version
+                []int{2, 0, 2, 1, 4, 1, 5, 2, 2, 3, 4, 1, 5, 4, 2, 5, 4, 1, 5, 6},
+                // v1, projects, {project}, locations, {location}, operations, {op}
+                []string{"v1", "projects", "project", "locations", "location", "operations", "op"},
+                "",
+            ))
+            ```
+
+            ### Recommended approach: URL-rewriting middleware + direct gRPC for list
+
+            In `internal/gateway/gateway.go`, before returning the Gateway in `New()`,
+            capture the opsClient (already created at line 46 as `longrunninggw.NewOperationsClient(conn)`):
+
+            ```go
+            // Store opsClient in Gateway struct for use in the rewriter:
+            // Add field: opsClient longrunninggw.OperationsClient
+            // Or capture it in a closure in New():
+            opsClient := longrunninggw.NewOperationsClient(conn)
+            ```
+
+            Define this helper function (or inline it):
+
+            ```go
+            // projectScopedLRORewriter intercepts GET requests for project-scoped operation paths
+            // and either rewrites them to the registered /v1/operations/** pattern (GetOperation)
+            // or calls the gRPC ListOperations directly (ListOperations).
+            //
+            // Pattern matched: GET /v1/projects/{p}/locations/{l}/operations[/{id}]
+            //
+            // GetOperation (path has a trailing /{id}):
+            //   Rewrites URL to /v1/operations/{full-name} where full-name =
+            //   "projects/P/locations/L/operations/ID". The generated handler puts this
+            //   into the `name` field. lro.Store.GetOperation does TrimPrefix("operations/")
+            //   which is a no-op here, so it looks up "projects/P/locations/L/operations/ID"
+            //   directly — matching the stored key.
+            //
+            // ListOperations (path ends with /operations, no trailing id):
+            //   Calls opsClient.ListOperations directly with Name="projects/P/locations/L".
+            //   lro.Store.ListOperations uses this as a key prefix to filter operations.
+            func projectScopedLRORewriter(opsClient longrunninggw.OperationsClient, mux *runtime.ServeMux) http.Handler {
+                return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+                    const v1prefix = "/v1/"
+                    if r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, v1prefix) {
+                        path := r.URL.Path[len(v1prefix):]  // e.g. "projects/P/locations/L/operations/ID"
+                        lastOp := strings.LastIndex(path, "/operations")
+                        if lastOp >= 0 && strings.HasPrefix(path, "projects/") {
+                            suffix := path[lastOp+len("/operations"):]  // "" or "/ID"
+                            if suffix == "" || suffix == "/" {
+                                // ListOperations: parent = path up to /operations
+                                parent := path[:lastOp]  // "projects/P/locations/L"
+                                resp, err := opsClient.ListOperations(r.Context(),
+                                    &longrunninggw.ListOperationsRequest{Name: parent})
+                                if err != nil {
+                                    runtime.DefaultHTTPErrorHandler(r.Context(), mux,
+                                        runtime.MarshalerForRequest(mux, r), w, r, err)
+                                    return
+                                }
+                                w.Header().Set("Content-Type", "application/json")
+                                m := runtime.MarshalerForRequest(mux, r)
+                                _ = m.NewEncoder(w).Encode(resp)
+                                return
+                            }
+                            // GetOperation: full path after /v1/ is the operation name.
+                            // Rewrite to /v1/operations/{name} which hits the registered pattern.
+                            r2 := r.Clone(r.Context())
+                            r2.URL.Path = "/v1/operations/" + path
+                            mux.ServeHTTP(w, r2)
+                            return
+                        }
+                    }
+                    mux.ServeHTTP(w, r)
+                })
+            }
+            ```
+
+            Apply the rewriter in `Start()`:
+            ```go
+            g.httpSrv = &http.Server{Handler: projectScopedLRORewriter(g.opsClient, g.mux)}
+            ```
+
+            And store opsClient in the Gateway struct:
+            ```go
+            type Gateway struct {
+                mux       *runtime.ServeMux
+                httpSrv   *http.Server
+                conn      *grpc.ClientConn
+                opsClient longrunninggw.OperationsClient  // for LRO rewriter
+            }
+            ```
+
+            In `New()`, after `RegisterOperationsHandlerClient`:
+            ```go
+            return &Gateway{mux: mux, conn: conn, opsClient: longrunninggw.NewOperationsClient(conn)}, nil
+            ```
+
+            Add import `"strings"` if not already present.
+
+            Implement a clean version of this rewriter in `internal/gateway/gateway.go`.
+            Import "strings" (already used or add it).
+
+            ### Tests
+            If `internal/gateway/gateway_test.go` exists, add test cases verifying:
+            1. GET /v1/projects/P/locations/L/operations/ID returns the operation.
+            2. GET /v1/projects/P/locations/L/operations returns a list.
+
+            ### Verification gate
+            ```
+            go build ./...
+            go vet ./...
+            go test ./internal/gateway/... ./internal/lro/...
+            ```
+
+            ### Constraints
+            - Only modify `internal/gateway/gateway.go`.
+            - Do NOT modify `internal/gen/google/longrunning/operations.pb.gw.go` (generated).
+            - Do NOT modify `internal/lro/store.go` (Agent B's file).
+          files:
+            - internal/gateway/gateway.go
+        - id: B
+          task: |
+            ## Agent B — Delete→Empty, Multi-Error Validation, IAM Permissive Fix (C5 + I5 + I6 + I8)
+
+            ### What to implement
+
+            **Bug 1 (I5/I8): Delete LRO returns deleted resource instead of Empty**
+            In `internal/server/server.go`, find ALL Delete* methods. Each currently does:
+              `return s.lro.CreateDone(parent, theDeletedResource)`
+            Change all 7 of them to:
+              `return s.lro.CreateDone(parent, &emptypb.Empty{})`
+            The 7 methods: DeleteTrigger, DeleteChannel, DeleteChannelConnection,
+            DeleteMessageBus, DeletePipeline, DeleteEnrollment, DeleteGoogleApiSource.
+            Add import `"google.golang.org/protobuf/types/known/emptypb"` if not present.
+
+            **Bug 2 (I6 + P7): CreateTrigger multi-error validation and camelCase fix**
+            In `internal/server/server.go`, refactor CreateTrigger validation:
+            - Collect all missing-field errors into a slice before returning.
+            - Return them as a gRPC status with code InvalidArgument and a BadRequest
+              detail containing one FieldViolation per missing field.
+            - Also change "trigger_id is required" to "triggerId is required" (P7).
+
+            Import needed:
+            ```go
+            "google.golang.org/genproto/googleapis/rpc/errdetails"
+            grpcstatus "google.golang.org/grpc/status"
+            ```
+
+            Pattern:
+            ```go
+            func (s *Server) CreateTrigger(ctx context.Context, req *eventarcpb.CreateTriggerRequest) (*longrunningpb.Operation, error) {
+                var violations []*errdetails.BadRequest_FieldViolation
+                if req.GetParent() == "" {
+                    violations = append(violations, &errdetails.BadRequest_FieldViolation{Field: "parent", Description: "parent is required"})
+                }
+                if req.GetTriggerId() == "" {
+                    violations = append(violations, &errdetails.BadRequest_FieldViolation{Field: "triggerId", Description: "triggerId is required"})
+                }
+                if req.GetTrigger() == nil {
+                    violations = append(violations, &errdetails.BadRequest_FieldViolation{Field: "trigger", Description: "trigger is required"})
+                } else {
+                    if req.GetTrigger().GetDestination() == nil {
+                        violations = append(violations, &errdetails.BadRequest_FieldViolation{Field: "trigger.destination", Description: "trigger.destination is required"})
+                    }
+                    if len(req.GetTrigger().GetEventFilters()) == 0 {
+                        violations = append(violations, &errdetails.BadRequest_FieldViolation{Field: "trigger.eventFilters", Description: "trigger.event_filters must not be empty"})
+                    }
+                }
+                if len(violations) > 0 {
+                    st := grpcstatus.New(codes.InvalidArgument, violations[0].Description)
+                    if br, err := st.WithDetails(&errdetails.BadRequest{FieldViolations: violations}); err == nil {
+                        return nil, br.Err()
+                    }
+                    return nil, st.Err()
+                }
+                // ... rest of method unchanged
+            }
+            ```
+
+            **Bug 3 (C5): IAM permissive mode allows unauthenticated requests**
+            In `internal/server/server.go`, in `checkPermission`, add an early deny
+            for empty principal when in permissive mode. Find the iamMode type by
+            looking at the import `emulatorauth "github.com/blackwell-systems/gcp-emulator-auth"`.
+            The existing code uses `s.iamMode = config.Mode` and `config.Mode.IsEnabled()`.
+            Check if there is an `emulatorauth.AuthModePermissive` constant. If the type
+            is a string type, compare as:
+
+            ```go
+            func (s *Server) checkPermission(ctx context.Context, permission string, resource string) error {
+                if s.iamClient == nil {
+                    return nil // IAM disabled
+                }
+
+                principal := emulatorauth.ExtractPrincipalFromContext(ctx)
+
+                // Permissive mode: no principal → deny (matches documented behavior table)
+                if principal == "" && string(s.iamMode) == "permissive" {
+                    return status.Errorf(codes.PermissionDenied,
+                        "permissive mode requires authentication: no principal in request")
+                }
+
+                // ... rest unchanged
+            }
+            ```
+
+            ### Tests to add/update in internal/server/server_test.go
+            1. `TestDeleteTrigger_LROResponseIsEmpty`: create a trigger, delete it, unpack the
+               LRO response anypb.Any, verify it is *emptypb.Empty not *eventarcpb.Trigger.
+            2. `TestCreateTrigger_MultipleValidationErrors`: call CreateTrigger with empty
+               request body; verify the returned status has BadRequest details with at least
+               2 FieldViolations (triggerId + trigger).
+            3. `TestCreateTrigger_TriggerIdCamelCase`: call with no triggerId; verify error
+               message contains "triggerId" (camelCase) not "trigger_id".
+            4. `TestCheckPermission_PermissiveNoPrincipal`: create a server with iamMode=permissive
+               (mock or set directly); verify checkPermission returns PermissionDenied when
+               principal is empty. (If setting up a real IAM client is complex, test via
+               the iamMode string comparison directly.)
+
+            ### Tests to update in internal/lro/store_test.go
+            Review existing tests in lro/store_test.go. If any test unpacks a delete LRO
+            response and expects a Trigger (old behavior), update it to expect emptypb.Empty.
+            If no such test exists, add one: `TestCreateDone_WithEmpty` — verify CreateDone
+            with &emptypb.Empty{} produces an Operation whose Response unpacks to *emptypb.Empty.
+
+            ### Verification gate
+            ```
+            go build ./...
+            go vet ./...
+            go test ./internal/server/... ./internal/lro/...
+            ```
+
+            ### Constraints
+            - Only modify: internal/server/server.go, internal/server/server_test.go,
+              internal/lro/store_test.go.
+            - Do NOT modify internal/lro/store.go (Agent G owns it in Wave 2).
+            - Do NOT modify internal/gateway/gateway.go (Agent A).
+            - Do NOT modify any cmd mains (Agent C).
+          files:
+            - internal/server/server.go
+            - internal/server/server_test.go
+            - internal/lro/store_test.go
+        - id: C
+          task: |
+            ## Agent C — Docs, SDK Demo, and Startup Token Log (C3 + C4 + I9 + I10 + P4)
+
+            ### What to implement
+
+            **C3: Fix webhook-receiver run command in docs**
+            Running `go run ./examples/webhook-receiver` from the project root fails because
+            the webhook-receiver is a separate Go module. Fix in two places:
+            1. `README.md`: search for all occurrences of `go run ./examples/webhook-receiver`
+               and replace with `cd examples/webhook-receiver && go run main.go`.
+            2. `examples/sdk-demo/main.go`: the package comment at top (lines 8-13) shows
+               `go run ./examples/webhook-receiver`. Change to the correct form.
+
+            **C4: Auto-create my-channel in sdk-demo before publishing**
+            In `examples/sdk-demo/main.go`, before step 7 (Publish CloudEvent via Publisher SDK),
+            add a step 3b that creates the channel if it does not exist:
+
+            ```go
+            fmt.Println("\n── 3b. Ensure channel my-channel exists")
+            _, err = client.CreateChannel(ctx, &eventarcpb.CreateChannelRequest{
+                Parent:    parent,
+                ChannelId: "my-channel",
+                Channel:   &eventarcpb.Channel{},
+            })
+            if err != nil {
+                // AlreadyExists is fine — channel was pre-created
+                if status.Code(err) != codes.AlreadyExists {
+                    must(err, "create channel my-channel")
+                }
+                fmt.Println("   channel already exists, continuing")
+            } else {
+                fmt.Println("   created channel my-channel")
+            }
+            ```
+
+            Import `"google.golang.org/grpc/codes"` and `"google.golang.org/grpc/status"` in
+            the sdk-demo if not already imported (check the existing imports).
+
+            Also add a note to README in the sdk-demo section:
+            > The sdk-demo automatically creates `my-channel` before publishing. If you
+            > prefer to pre-create it manually:
+            > ```bash
+            > curl -X POST "http://localhost:8085/v1/projects/my-project/locations/us-central1/channels?channelId=my-channel" \
+            >   -H "Content-Type: application/json" -d '{}'
+            > ```
+
+            **I9: Include event ID in sdk-demo completion message**
+            In `examples/sdk-demo/main.go`, after the PublishEvents call, update the output:
+            The event ID is in `ce.GetId()`. Change:
+            ```go
+            fmt.Printf("   published: %s (type: %s)\n", ce.GetId(), ce.GetType())
+            fmt.Println("   → event dispatched; check webhook receiver logs for delivery confirmation")
+            ```
+            To:
+            ```go
+            fmt.Printf("   published event id: %s\n", ce.GetId())
+            fmt.Printf("   event type: %s\n", ce.GetType())
+            fmt.Printf("   → to find delivery in webhook logs: grep for Ce-Id: %s\n", ce.GetId())
+            ```
+
+            **I10: Startup log confirmation when EVENTARC_EMULATOR_TOKEN is set**
+            In each of `cmd/server-dual/main.go`, `cmd/server/main.go`, `cmd/server-rest/main.go`,
+            after the `log.Printf("IAM mode: %s", ...)` line, add:
+            ```go
+            if token := os.Getenv("EVENTARC_EMULATOR_TOKEN"); token != "" {
+                log.Printf("Bearer token injection: enabled")
+            }
+            ```
+
+            **P4: Fix startup REST endpoint placeholder**
+            In `cmd/server-dual/main.go`, line ~145:
+            ```go
+            log.Printf("REST: http://localhost:%d/v1/projects/{project}/locations/{location}/triggers", *httpPort)
+            ```
+            Change `{project}` and `{location}` to concrete example values:
+            ```go
+            log.Printf("REST: http://localhost:%d/v1/projects/my-project/locations/us-central1/triggers", *httpPort)
+            ```
+            If `cmd/server-rest/main.go` has a similar placeholder, fix it too.
+
+            ### Verification gate
+            ```
+            go build ./...
+            go vet ./...
+            go test ./...
+            ```
+            Additionally verify sdk-demo compiles (separate module):
+            ```
+            cd /path/to/repo/examples/sdk-demo && go build .
+            ```
+
+            ### Constraints
+            - Only modify: examples/sdk-demo/main.go, README.md, cmd/server-dual/main.go,
+              cmd/server/main.go, cmd/server-rest/main.go.
+            - Do NOT modify internal/ packages.
+            - The cmd mains will be further modified by Agent F in Wave 2 — leave the
+              port validation and help text changes to Agent F.
+          files:
+            - examples/sdk-demo/main.go
+            - README.md
+            - cmd/server-dual/main.go
+            - cmd/server/main.go
+            - cmd/server-rest/main.go
+        - id: D
+          task: |
+            ## Agent D — Debug Logging Infrastructure (C6)
+
+            ### Context
+            The `--log-level debug` flag is accepted but has no observable effect.
+            All packages use `log.Printf` unconditionally with no level filtering.
+            `internal/logger/logger.go` does not exist yet — you will create it from scratch
+            as part of Step 1.
+
+            ### What to implement
+
+            **Step 1: Verify and complete internal/logger/logger.go**
+            The scaffold contains a complete implementation. Review it, ensure it compiles,
+            and add a package-level test file `internal/logger/logger_test.go` with tests:
+            - TestNew_DefaultsToInfo: New("") emits info but not debug.
+            - TestLogger_Debug: New("debug") emits [DEBUG] prefixed lines.
+            - TestLogger_LevelFiltering: New("error") suppresses debug, info, warn.
+            - TestLogger_IsDebug: New("debug").IsDebug() == true; New("info").IsDebug() == false.
+
+            **Step 2: Update internal/dispatcher/http.go**
+            - Add `logger *logger.Logger` field to `Dispatcher` struct.
+            - Change `NewDispatcher(client *http.Client)` to
+              `NewDispatcher(client *http.Client, log ...*logger.Logger) *Dispatcher`.
+              Use a variadic parameter so existing call sites (`NewDispatcher(nil)`) compile
+              unchanged. Set logger: if len(log) > 0 && log[0] != nil { d.logger = log[0] }
+              else { d.logger = logger.New("info") }.
+            - Replace existing `log.Printf("dispatching event to %s, status: %d", url, resp.StatusCode)`
+              with `d.logger.Info("dispatching event to %s status=%d", url, resp.StatusCode)`.
+            - Add before the HTTP request:
+              `d.logger.Debug("dispatch: POST %s event_id=%s type=%s", url, event.ID(), event.Type())`
+            - Add after response:
+              `d.logger.Debug("dispatch: response status=%d url=%s", resp.StatusCode, url)`
+            - On transport error:
+              `d.logger.Error("dispatch: send failed url=%s err=%v", url, err)`
+            - Import: `"github.com/blackwell-systems/gcp-eventarc-emulator/internal/logger"`
+              Remove import of `"log"` if no longer used.
+
+            **Step 3: Update internal/publisher/server.go**
+            - Add `logger *logger.Logger` field to `Server` struct.
+            - Change `NewServer(router RouterMatcher, dispatcher EventDispatcher, channels ChannelChecker)`
+              to `NewServer(router RouterMatcher, dispatcher EventDispatcher, channels ChannelChecker, log ...*logger.Logger) *Server`.
+              Use variadic so existing 3-arg call sites compile unchanged.
+              Set logger: if len(log) > 0 && log[0] != nil { s.logger = log[0] }
+              else { s.logger = logger.New("info") }.
+            - Add after matching triggers in PublishEvents:
+              `s.logger.Debug("publish: matched %d triggers channel=%s", len(matched), channelName)`
+            - Add per-dispatch debug log:
+              `s.logger.Debug("publish: dispatch trigger=%s", trigger.GetName())`
+            - Replace any existing `log.Printf` calls with appropriate s.logger.* calls.
+            - Import logger package; remove `"log"` import if no longer used.
+
+            **Step 4: Update internal/router/router.go**
+            - Add `logger *logger.Logger` field to `Router` struct.
+            - Change `NewRouter(storage StorageReader)` to
+              `NewRouter(storage StorageReader, log ...*logger.Logger) *Router`.
+              Use variadic so existing call sites compile unchanged.
+              Set logger: if len(log) > 0 && log[0] != nil { r.logger = log[0] }
+              else { r.logger = logger.New("info") }.
+            - Add in Match() after loading triggers:
+              `r.logger.Debug("router: evaluating %d triggers for type=%s", len(triggers), event.Type())`
+            - Add after matching:
+              `r.logger.Debug("router: matched %d/%d triggers", len(matched), len(triggers))`
+            - CEL error logs currently use `log.Printf` — change to `r.logger.Warn(...)`.
+            - Import logger package; remove `"log"` import if no longer used.
+
+            **Step 5: Update call sites in cmd mains — DO NOT touch cmd mains**
+            Do NOT modify cmd/server-dual/main.go, cmd/server/main.go, or
+            cmd/server-rest/main.go. Those files are owned by Agent C in Wave 1.
+            Agent F will wire the logger into cmd mains in Wave 2.
+            Instead, ensure nil-logger defaults work correctly in all three constructors
+            so the system compiles and runs (at info level) without logger being passed.
+
+            **Step 6: Verify test files compile without changes**
+            Because the logger parameter is variadic, existing test call sites
+            (`NewDispatcher(client)`, `NewRouter(storage)`, `NewServer(rtr, dsp, chk)`)
+            compile unchanged — no edits to test files are needed for this step.
+            Only update test files if you need to add new test cases (e.g., to verify
+            debug logging output).
+
+            Similarly, the cmd mains (`cmd/server-dual/main.go`, etc.) call these
+            constructors with the old argument counts and will compile without modification.
+            Agent F will pass the shared logger explicitly in Wave 2.
+
+            ### Verification gate
+            ```
+            go build ./...
+            go vet ./...
+            go test ./internal/logger/... ./internal/dispatcher/... ./internal/publisher/... ./internal/router/...
+            ```
+
+            ### Constraints
+            - Own exclusively: internal/logger/logger.go, internal/logger/logger_test.go (new),
+              internal/dispatcher/http.go, internal/dispatcher/http_test.go,
+              internal/publisher/server.go, internal/router/router.go,
+              internal/router/router_test.go.
+            - Do NOT modify cmd mains (Agent C's files in Wave 1).
+            - Do NOT modify internal/server/server.go (Agent B).
+            - Do NOT modify internal/gateway/gateway.go (Agent A).
+          files:
+            - internal/logger/logger.go
+            - internal/logger/logger_test.go
+            - internal/dispatcher/http.go
+            - internal/dispatcher/http_test.go
+            - internal/publisher/server.go
+            - internal/router/router.go
+            - internal/router/router_test.go
+    - number: 2
+      agents:
+        - id: E
+          task: |
+            ## Agent E — Healthz Endpoint (I4)
+
+            ### Context
+            The server has no machine-readable "ready" signal. CI scripts must grep
+            for "Ready to accept" text, which is brittle.
+
+            Wave 1 Agent A's LRO route changes are already merged into gateway.go.
+            Read the current state of internal/gateway/gateway.go before starting.
+
+            ### What to implement
+            In `internal/gateway/gateway.go`, in the `New` function, after all gRPC-gateway
+            handlers are registered (and after Agent A's LRO rewriter is in place), register
+            a healthz endpoint.
+
+            The `runtime.ServeMux` in grpc-gateway v2 provides a `HandlePath` method:
+            ```go
+            mux.HandlePath("GET", "/healthz", func(w http.ResponseWriter, r *http.Request, pathParams map[string]string) {
+                w.Header().Set("Content-Type", "application/json")
+                w.WriteHeader(http.StatusOK)
+                _, _ = w.Write([]byte(`{"status":"ok"}`))
+            })
+            ```
+
+            Check if `HandlePath` is available in the grpc-gateway version used (check
+            `go.mod` for `github.com/grpc-ecosystem/grpc-gateway/v2`). It was introduced
+            in grpc-gateway v2.5.0. If not available, use a wrapping http.Handler approach:
+            the `projectScopedLRORewriter` from Agent A already wraps the mux; add the
+            healthz check there.
+
+            Also add a `/readyz` alias pointing to the same response:
+            ```go
+            mux.HandlePath("GET", "/readyz", func(w http.ResponseWriter, r *http.Request, _ map[string]string) {
+                w.Header().Set("Content-Type", "application/json")
+                w.WriteHeader(http.StatusOK)
+                _, _ = w.Write([]byte(`{"status":"ok"}`))
+            })
+            ```
+
+            ### Tests
+            If gateway_test.go exists, add:
+            - TestHealthz: GET /healthz returns 200 {"status":"ok"}.
+            - TestReadyz: GET /readyz returns 200 {"status":"ok"}.
+
+            ### Verification gate
+            ```
+            go build ./...
+            go vet ./...
+            go test ./internal/gateway/...
+            ```
+
+            ### Constraints
+            - Only modify internal/gateway/gateway.go.
+            - Wave 1 changes (Agent A's LRO rewriter) are already in this file.
+          files:
+            - internal/gateway/gateway.go
+          dependencies:
+            - A
+        - id: F
+          task: |
+            ## Agent F — CLI UX Improvements (I1 + I2 + I11 + I12 + P2 + P3 + P10 + I3 + logger wiring)
+
+            ### Context
+            Wave 1 Agent C has already added:
+            - EVENTARC_EMULATOR_TOKEN startup log (I10)
+            - Fixed REST endpoint placeholder (P4)
+            Wave 1 Agent D has already added the logger package with nil-logger defaults
+            in all constructors. This agent wires the logger into cmd mains.
+
+            Read the current state of all three cmd mains before starting.
+
+            ### What to implement in all three cmd mains
+
+            **Wire the leveled logger (completing C6)**
+            ```go
+            import "github.com/blackwell-systems/gcp-eventarc-emulator/internal/logger"
+
+            // After flag.Parse() and validateLogLevel():
+            lgr := logger.New(*logLevel)
+
+            // Replace the existing nil-logger constructor calls:
+            rtr := router.NewRouter(srv.Storage(), lgr)
+            dsp := dispatcher.NewDispatcher(nil, lgr)
+            pub := publisher.NewServer(rtr, dsp, srv.Storage(), lgr)
+            ```
+
+            **I11: Port range validation at flag parse time**
+            In server-dual and server-rest (which have both grpcPort and httpPort):
+            ```go
+            if *grpcPort < 1 || *grpcPort > 65535 {
+                fmt.Fprintf(os.Stderr, "invalid --grpc-port %d: must be in range 1-65535\n", *grpcPort)
+                os.Exit(1)
+            }
+            if *httpPort < 1 || *httpPort > 65535 {
+                fmt.Fprintf(os.Stderr, "invalid --http-port %d: must be in range 1-65535\n", *httpPort)
+                os.Exit(1)
+            }
+            ```
+            In server (gRPC only): validate grpcPort only.
+
+            **I2/I12: --port deprecation warning in cmd/server/main.go**
+            After flag.Parse(), detect if --port was explicitly set:
+            ```go
+            portWasSet := false
+            flag.Visit(func(f *flag.Flag) {
+                if f.Name == "port" {
+                    portWasSet = true
+                }
+            })
+            if portWasSet {
+                fmt.Fprintln(os.Stderr, "WARNING: --port is deprecated; use --grpc-port instead")
+            }
+            ```
+
+            **I1: --help use-case blurbs**
+            In each cmd main's flag.Usage function, add a "When to use:" line after the
+            variant name:
+            - server-dual: "When to use: recommended for all local development; provides both gRPC and REST access."
+            - server: "When to use: gRPC-only workloads. The REST gateway is not included."
+            - server-rest: "When to use: REST-only clients; gRPC backend runs internally."
+
+            **P2: --version includes binary name**
+            - server-dual: `fmt.Printf("GCP Eventarc Emulator v%s (server-dual)\n", version)`
+            - server: `fmt.Printf("GCP Eventarc Emulator v%s (server)\n", version)`
+            - server-rest: `fmt.Printf("GCP Eventarc Emulator v%s (server-rest)\n", version)`
+
+            **P3: EVENTARC_EMULATOR_HOST consistency in help text**
+            In cmd/server-rest/main.go help, add:
+            ```
+            EVENTARC_EMULATOR_HOST  not applicable (gRPC port is internal)
+            ```
+            In server-dual and server help, normalize to:
+            ```
+            EVENTARC_EMULATOR_HOST  gRPC host:port for clients (e.g. localhost:9085)
+            ```
+
+            **P10: Document flag vs env var precedence**
+            In each cmd main's flag.Usage, for the log-level section append:
+            "(env: GCP_MOCK_LOG_LEVEL; flag takes precedence)"
+
+            **I3 (partial): Startup log level labels**
+            Prefix key startup log lines with level labels using the leveled logger.
+            After wiring `lgr`, replace:
+              `log.Printf("IAM mode: %s", srv.IAMMode())`
+            with:
+              `lgr.Info("IAM mode: %s", srv.IAMMode())`
+            And similarly for other startup lines. Keep the binary name/version line as
+            `log.Printf(...)` since it always prints regardless of level.
+            Only suppress startup lines when logLevel is "error":
+            use `lgr.Info(...)` for non-essential startup lines so they are suppressed
+            at error level.
+
+            ### Verification gate
+            ```
+            go build ./...
+            go vet ./...
+            go test ./...
+            ```
+
+            ### Constraints
+            - Only modify cmd/server-dual/main.go, cmd/server/main.go, cmd/server-rest/main.go.
+            - Wave 1 changes (Agent C, Agent D) are already merged. Read files before editing.
+          files:
+            - cmd/server-dual/main.go
+            - cmd/server/main.go
+            - cmd/server-rest/main.go
+          dependencies:
+            - C
+            - D
+        - id: G
+          task: |
+            ## Agent G — Polish: README, Makefile, LRO Error Consistency (P1 + P6 + P8 + P9 + P13 + P14 + P15)
+
+            ### What to implement
+
+            **P1: Fix README RPC count**
+            In README.md, line ~10: "Implements the full Eventarc v1 API surface (40 RPCs) plus..."
+            Change "40 RPCs" to "47 RPCs". The tagline and Key Capabilities already say "47 RPCs".
+            Wave 1 Agent C has already modified README.md — read the current state before editing.
+
+            **P8: Add grpcurl to README**
+            In README.md, add a "Verify gRPC" subsection (in Quick Start or a Diagnostics section):
+            ```markdown
+            ### Verify gRPC connectivity
+            ```bash
+            grpcurl -plaintext localhost:9085 list
+            # → google.cloud.eventarc.v1.Eventarc
+            # → google.cloud.eventarc.publishing.v1.Publisher
+            # → google.longrunning.Operations
+            ```
+            Install grpcurl: https://github.com/fullstorydev/grpcurl
+            ```
+
+            **P13: Add test-race and test-integration Makefile targets**
+            In Makefile, add after the existing `test:` target:
+            ```makefile
+            test-race:
+            	go test -race ./...
+
+            test-integration:
+            	go test -v -run TestIntegration ./...
+            ```
+            Update the .PHONY line to include `test-race test-integration`.
+
+            **P14: README pretty-print tip**
+            In the Quick Start section of README.md, near the first curl example, add:
+            > **Tip:** Pipe curl output through `| jq .` for formatted JSON.
+
+            **P15: README note on single-dash vs double-dash**
+            In the README's CLI section (near the flag examples), add a note:
+            > **Note:** Go accepts both `-flag` and `--flag`. Examples use `--` for clarity.
+
+            **P6: LRO NOT_FOUND error bracket consistency**
+            In `internal/lro/store.go`, the GetOperation error is:
+              `status.Errorf(codes.NotFound, "operation %q not found", name)`
+            Change `%q` to use square brackets, matching trigger/channel NOT_FOUND style:
+              `status.Errorf(codes.NotFound, "operation [%s] not found", name)`
+            Also update DeleteOperation's NotFound error from `%q` to `[%s]`.
+            Note: Agent B may have updated lro/store_test.go in Wave 1. After making
+            this change, run `go test ./internal/lro/...` to verify test assertions still
+            pass. Update any test that checks for `%q` format in the error message.
+
+            **P9: Env var prefix note in README**
+            In README.md, in the Environment Variables section, add a note:
+            > **Note:** `IAM_MODE` and `GCP_MOCK_LOG_LEVEL` use legacy prefixes for
+            > backward compatibility. A future release will standardize on `EVENTARC_` prefix.
+
+            ### Verification gate
+            ```
+            go build ./...
+            go vet ./...
+            go test ./internal/lro/...
+            make test
+            ```
+
+            ### Constraints
+            - Only modify: README.md, Makefile, internal/lro/store.go.
+            - Do NOT modify internal/gateway/gateway.go (Agent E owns it in Wave 2).
+            - Do NOT modify cmd mains (Agent F owns them in Wave 2).
+            - Wave 1 changes (Agents B, C) are already merged. Read current file states.
+          files:
+            - README.md
+            - Makefile
+            - internal/lro/store.go
+          dependencies:
+            - B
+            - C
+quality_gates:
+    level: standard
+    gates:
+        - type: build
+          command: go build ./...
+          required: true
+        - type: lint
+          command: go vet ./...
+          required: true
+        - type: test
+          command: go test ./...
+          required: true
+pre_mortem:
+    overall_risk: medium
+    rows:
+        - scenario: |
+            C1/C2 LRO rewriter — Agent A's URL rewriting logic may have edge cases.
+            For example, a path like /v1/projects/P/locations/L/operations may be misidentified
+            as a GetOperation request instead of ListOperations, or the name reconstruction
+            from the URL may include/exclude the /v1/ prefix incorrectly, causing the
+            lro.Store lookup to fail.
+          likelihood: medium
+          impact: high
+          mitigation: |
+            Agent A should write explicit tests covering both GetOperation (path ends with /ID)
+            and ListOperations (path ends with /operations) scenarios. The lro.Store key is
+            exactly "projects/P/locations/L/operations/ID" — the URL rewriter must produce
+            this exact string as the name in the gRPC request (after stripping /v1/).
+        - scenario: |
+            Wave 1 conflict on cmd mains — Agent C modifies all three cmd mains. Agent D is
+            instructed not to touch them. If Agent D changes the constructor signatures for
+            NewDispatcher/NewRouter/NewServer, the cmd mains will fail to compile after
+            Agent C's wave merges (since Agent C does not update those calls).
+          likelihood: medium
+          impact: high
+          mitigation: |
+            Agent D MUST keep the nil-logger as a default. The old zero-argument form
+            `NewDispatcher(nil)` becomes `NewDispatcher(nil, nil)` — but Agent C's unchanged
+            cmd main code calls `NewDispatcher(nil)` (one arg), which will not compile.
+            Resolution: Agent D should NOT change the cmd mains, and the call sites in cmd
+            mains must still compile. To prevent compile failure, Agent D must update the
+            cmd mains' constructor call sites even though Agent C owns those files in Wave 1.
+            REVISED PLAN: Make the logger parameter a variadic option to avoid breaking call
+            sites: `func NewDispatcher(client *http.Client, opts ...DispatcherOption) *Dispatcher`
+            OR use a separate `WithLogger(l *logger.Logger)` option. This avoids any call-site
+            breakage. Agent D should choose the variadic approach.
+        - scenario: |
+            Multi-error validation (I6) requires google.golang.org/genproto/googleapis/rpc/errdetails.
+            This package may not be in go.mod as a direct dependency.
+          likelihood: medium
+          impact: medium
+          mitigation: |
+            Agent B should check go.mod first. Run `go get google.golang.org/genproto/googleapis/rpc/errdetails`
+            if needed. The package is typically a transitive dependency of google.golang.org/grpc.
+            Fallback: return a single concatenated error message string instead of FieldViolations.
+        - scenario: |
+            C5 IAM permissive fix — emulatorauth.AuthMode type may not be a string-comparable
+            type or "permissive" may be spelled differently in the library.
+          likelihood: low
+          impact: medium
+          mitigation: |
+            Agent B should inspect the emulatorauth package. The code already does
+            `s.iamMode = config.Mode` and `string(s.iamMode)` — so string comparison works.
+            The value "permissive" is confirmed by cmd/server-dual/main.go help text.
+        - scenario: |
+            P6 lro/store.go bracket fix (Agent G) conflicts with lro/store_test.go tests
+            that Agent B wrote in Wave 1 asserting the old %q format in error messages.
+          likelihood: low
+          impact: low
+          mitigation: |
+            Agent G should run `go test ./internal/lro/...` after the P6 change and fix any
+            test string assertions from the old format to the new bracket format.
+        - scenario: |
+            C4 sdk-demo channel auto-creation — examples/sdk-demo is a separate Go module.
+            The eventarcpb.CreateChannelRequest type may not be available or may require a
+            different import path in the sdk-demo's go.mod.
+          likelihood: low
+          impact: medium
+          mitigation: |
+            Agent C should check examples/sdk-demo/go.mod for the cloud.google.com/go/eventarc
+            version and verify CreateChannel is available. The sdk-demo already uses eventarcpb
+            types (e.g. CreateTriggerRequest) so the import path is already correct.
+            If codes/status are not imported, add them.
+critic_report:
+    verdict: PASS
+    agent_reviews:
+        A:
+            agent_id: A
+            verdict: PASS
+            issues: []
+        B:
+            agent_id: B
+            verdict: PASS
+            issues: []
+        C:
+            agent_id: C
+            verdict: PASS
+            issues: []
+        D:
+            agent_id: D
+            verdict: PASS
+            issues: []
+        E:
+            agent_id: E
+            verdict: PASS
+            issues: []
+        F:
+            agent_id: F
+            verdict: PASS
+            issues: []
+        G:
+            agent_id: G
+            verdict: PASS
+            issues: []
+    summary: >-
+        All 2 errors and 3 warnings from initial critic review resolved by
+        Orchestrator. Agent A ListOperations contradiction removed (direct gRPC call
+        approach only). Agent D non-variadic signatures corrected to variadic so cmd
+        main call sites compile unchanged. Interface contracts updated to match.
+        Agent D stale scaffold instruction removed. Agent B advisory warnings noted.
+    reviewed_at: 2026-04-02T00:00:00Z
+    issue_count: 0
+injection_method: hook
