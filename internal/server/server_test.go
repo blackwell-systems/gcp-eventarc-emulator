@@ -512,13 +512,6 @@ func TestCreateEnrollment_Success(t *testing.T) {
 	}
 }
 
-// minimalEnrollment returns an Enrollment with required fields for creation.
-func minimalEnrollment() *eventarcpb.Enrollment {
-	return &eventarcpb.Enrollment{
-		CelMatch: "message.type == \"test\"",
-	}
-}
-
 // -------------------------------------------------------------------------
 // Pipeline tests
 // -------------------------------------------------------------------------
