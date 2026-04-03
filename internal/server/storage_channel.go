@@ -267,4 +267,3 @@ func (s *Storage) UpdateGoogleChannelConfig(ctx context.Context, cfg *eventarcpb
 	s.googleChannelConfigs[name] = stored
 	return cloneProto(stored), nil
 }
-
