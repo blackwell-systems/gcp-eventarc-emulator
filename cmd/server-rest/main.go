@@ -92,7 +92,7 @@ func main() {
 
 	lgr := logger.New(*logLevel)
 
-	log.Printf("GCP Eventarc Emulator v%s (REST)", version)
+	lgr.Info("GCP Eventarc Emulator v%s (REST)", version)
 	lgr.Info("Log level: %s", *logLevel)
 	lgr.Info("Starting gRPC backend on internal port %d", *grpcPort)
 	lgr.Info("Starting HTTP gateway on port %d", *httpPort)
@@ -128,9 +128,12 @@ func main() {
 	// Create the shared gRPC server with all services registered
 	grpcSrv := server.NewGRPCServer(srv, pub, lgr)
 
+	grpcReadyCh := make(chan struct{})
+
 	// Start gRPC server in background (internal only — not exposed to clients)
 	go func() {
 		lgr.Info("gRPC backend listening at %v (internal)", lis.Addr())
+		close(grpcReadyCh)
 		if err := grpcSrv.Serve(lis); err != nil {
 			log.Fatalf("Failed to serve gRPC: %v", err)
 		}
@@ -148,11 +151,14 @@ func main() {
 	httpAddr := fmt.Sprintf(":%d", *httpPort)
 	go func() {
 		lgr.Info("HTTP gateway listening at %s", httpAddr)
-		lgr.Info("Ready to accept REST requests")
 		if err := gw.Start(httpAddr); err != nil {
 			log.Fatalf("Failed to serve HTTP: %v", err)
 		}
 	}()
+
+	<-grpcReadyCh
+	lgr.Info("Ready to accept REST requests")
+	lgr.Info("REST: http://localhost:%d/v1/projects/my-project/locations/us-central1/triggers", *httpPort)
 
 	// Wait for interrupt signal to gracefully shut down
 	quit := make(chan os.Signal, 1)

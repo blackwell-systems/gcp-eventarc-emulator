@@ -92,7 +92,7 @@ func main() {
 
 	lgr := logger.New(*logLevel)
 
-	log.Printf("GCP Eventarc Emulator v%s (gRPC + REST)", version)
+	lgr.Info("GCP Eventarc Emulator v%s (gRPC + REST)", version)
 	lgr.Info("Log level: %s", *logLevel)
 
 	ctx, cancel := context.WithCancel(context.Background())
