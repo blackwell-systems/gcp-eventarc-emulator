@@ -328,7 +328,7 @@ func setupFullStack(t *testing.T) (eventarcpb.EventarcClient, publishingpb.Publi
 
 	rtr := router.NewRouter(srv.Storage())
 	dsp := dispatcher.NewDispatcher(nil)
-	pub := publisher.NewServer(rtr, dsp)
+	pub := publisher.NewServer(rtr, dsp, srv.Storage())
 
 	grpcSrv := server.NewGRPCServer(srv, pub)
 	go grpcSrv.Serve(lis) //nolint:errcheck

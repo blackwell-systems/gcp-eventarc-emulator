@@ -77,6 +77,12 @@ func (s *Server) LROStore() *lro.Store {
 	return s.lro
 }
 
+// IAMMode returns the active IAM enforcement mode as a string.
+// Returns "off", "permissive", or "strict".
+func (s *Server) IAMMode() string {
+	return string(s.iamMode)
+}
+
 // checkPermission verifies the caller has permission to perform the operation.
 // If iamClient is nil (IAM disabled), all requests are allowed.
 func (s *Server) checkPermission(ctx context.Context, permission string, resource string) error {
@@ -88,6 +94,13 @@ func (s *Server) checkPermission(ctx context.Context, permission string, resourc
 
 	allowed, err := s.iamClient.CheckPermission(ctx, principal, resource, permission)
 	if err != nil {
+		// Detect connection-refused / unavailable errors and return a user-friendly message.
+		errMsg := err.Error()
+		if strings.Contains(errMsg, "connection refused") || strings.Contains(errMsg, "Unavailable") {
+			return status.Errorf(codes.FailedPrecondition,
+				"IAM_MODE is active but no IAM emulator is reachable. "+
+					"Start the IAM emulator or set IAM_MODE=off.")
+		}
 		return status.Errorf(codes.Internal, "IAM check failed: %v", err)
 	}
 
@@ -186,6 +199,12 @@ func (s *Server) CreateTrigger(ctx context.Context, req *eventarcpb.CreateTrigge
 	}
 	if req.GetTrigger() == nil {
 		return nil, status.Error(codes.InvalidArgument, "trigger is required")
+	}
+	if req.GetTrigger().GetDestination() == nil {
+		return nil, status.Error(codes.InvalidArgument, "trigger.destination is required")
+	}
+	if len(req.GetTrigger().GetEventFilters()) == 0 {
+		return nil, status.Error(codes.InvalidArgument, "trigger.event_filters must not be empty: at least one event filter is required")
 	}
 
 	if err := s.checkPermission(ctx, "eventarc.triggers.create", req.GetParent()); err != nil {
