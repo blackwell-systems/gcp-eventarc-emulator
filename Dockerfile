@@ -13,6 +13,9 @@ ARG VARIANT=dual
 
 WORKDIR /build
 
+# Install git for private Go module downloads
+RUN apk add --no-cache git
+
 COPY go.mod go.sum ./
 RUN go mod download
 
