@@ -5,7 +5,7 @@ go 1.24.0
 require (
 	cloud.google.com/go/eventarc v1.18.0
 	cloud.google.com/go/longrunning v0.8.0
-	github.com/blackwell-systems/gcp-emulator-auth v0.4.0
+	github.com/blackwell-systems/gcp-emulator-auth v0.4.1
 	github.com/cloudevents/sdk-go/v2 v2.15.2
 	github.com/google/cel-go v0.27.0
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.28.0
